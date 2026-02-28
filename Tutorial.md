@@ -57,6 +57,8 @@ Univariate analysis:
 Multivariate analysis:
 
 * Considers all variables simultaneously.
+* Accepts the fact that different variable affects the system in combinations.
+* Interactions among different variables.
 * Detects patterns that only emerge in combination.
 
 In biology:
