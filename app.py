@@ -222,6 +222,141 @@ FIGS: Dict[str, go.Figure] = st.session_state["figs"]
 def store_fig(key: str, fig: go.Figure):
     FIGS[key] = fig
 
+# --------- Math funtions for Normalization
+def _as_numeric_df(X_df: pd.DataFrame) -> pd.DataFrame:
+    return X_df.apply(pd.to_numeric, errors="coerce")
+
+
+def sample_normalize(
+    X: pd.DataFrame,
+    method: str,
+    sample_factor: Optional[pd.Series] = None,
+    ref_sample: Optional[pd.Series] = None,
+    ref_feature: Optional[str] = None,
+    group_labels: Optional[pd.Series] = None,
+    eps: float = 1e-12,
+) -> pd.DataFrame:
+    """
+    X: samples x features
+    Returns X normalized by the chosen method.
+    """
+    Xn = X.copy()
+
+    if method == "None":
+        return Xn
+
+    if method == "Sample-specific normalization (factor)":
+        if sample_factor is None:
+            raise ValueError("sample_factor is required for sample-specific normalization.")
+        f = pd.to_numeric(sample_factor, errors="coerce").astype(float)
+        if f.isna().any():
+            raise ValueError("Sample factor has missing/non-numeric values.")
+        return Xn.div(f.values, axis=0)
+
+    if method == "Normalization by sum":
+        s = Xn.sum(axis=1).replace(0, np.nan)
+        return Xn.div(s.values, axis=0)
+
+    if method == "Normalization by median":
+        m = Xn.median(axis=1).replace(0, np.nan)
+        return Xn.div(m.values, axis=0)
+
+    if method == "Normalization by a reference sample (PQN)":
+        if ref_sample is None:
+            raise ValueError("ref_sample is required for PQN.")
+        ref = pd.to_numeric(ref_sample, errors="coerce").astype(float)
+        quot = Xn.div(ref.values + eps, axis=1)  # sample/feature-wise quotient
+        factors = quot.median(axis=1).replace(0, np.nan)
+        return Xn.div(factors.values, axis=0)
+
+    if method == "Normalization by a pooled sample from group (group PQN)":
+        if group_labels is None:
+            raise ValueError("group_labels is required for group PQN.")
+        gl = group_labels.astype(str)
+        Xout = Xn.copy()
+        for g in gl.unique():
+            idx = gl == g
+            ref = Xn.loc[idx].median(axis=0)  # pooled reference spectrum for group
+            quot = Xn.loc[idx].div(ref.values + eps, axis=1)
+            factors = quot.median(axis=1).replace(0, np.nan)
+            Xout.loc[idx] = Xn.loc[idx].div(factors.values, axis=0)
+        return Xout
+
+    if method == "Normalization by reference feature":
+        if ref_feature is None:
+            raise ValueError("ref_feature is required for reference-feature normalization.")
+        if ref_feature not in Xn.columns:
+            raise ValueError(f"Reference feature '{ref_feature}' not found in X.")
+        f = Xn[ref_feature].replace(0, np.nan)
+        return Xn.div(f.values, axis=0)
+
+    if method == "Quantile normalization":
+        # Make each SAMPLE (row) have the same distribution across features
+        # Implement quantile normalization on rows by applying column-wise QN to X.T
+        Xt = Xn.T  # features x samples
+        # sort each column (sample)
+        sorted_vals = np.sort(Xt.values, axis=0)
+        mean_sorted = np.mean(sorted_vals, axis=1)
+        # rank-based assignment per column
+        ranks = Xt.rank(method="average").astype(int) - 1  # 0..p-1
+        qn = Xt.copy()
+        for j in range(Xt.shape[1]):
+            qn.iloc[:, j] = ranks.iloc[:, j].map(lambda r: mean_sorted[r]).values
+        return qn.T
+
+    raise ValueError(f"Unknown sample normalization method: {method}")
+
+
+def transform_data(X: pd.DataFrame, method: str, eps: float = 1e-12) -> pd.DataFrame:
+    Xt = X.copy()
+
+    if method == "None":
+        return Xt
+
+    if method == "Log transformation (base 10)":
+        return np.log10(Xt + eps)
+
+    if method == "Log transformation (base 2)":
+        return np.log2(Xt + eps)
+
+    if method == "Square root transformation":
+        return np.sqrt(np.clip(Xt, a_min=0, a_max=None))
+
+    if method == "Cube root transformation":
+        # supports negatives too
+        return np.cbrt(Xt)
+
+    if method == "Variance stabilizing normalization (VSN)":
+        # Simple, robust VSN-like transform for teaching:
+        # asinh(x / s), with s = median of nonzero values (global)
+        vals = Xt.values.flatten()
+        vals = vals[np.isfinite(vals)]
+        vals = vals[vals > 0]
+        s = np.median(vals) if vals.size else 1.0
+        s = float(s) if s > 0 else 1.0
+        return np.arcsinh(Xt / s)
+
+    raise ValueError(f"Unknown transformation method: {method}")
+
+
+def batch_align(X: pd.DataFrame, batch: Optional[pd.Series], method: str) -> pd.DataFrame:
+    """
+    Very simple "alignment" = batch correction / centering.
+    X: samples x features
+    """
+    if batch is None or method == "None":
+        return X
+
+    b = batch.astype(str)
+    Xc = X.copy()
+
+    if method == "Center within batch (subtract batch mean)":
+        return Xc - Xc.groupby(b).transform("mean")
+
+    if method == "Center within batch (subtract batch median)":
+        return Xc - Xc.groupby(b).transform("median")
+
+    raise ValueError(f"Unknown alignment method: {method}")
 
 # -------------------------
 # Sidebar: Data import + column mapping
@@ -544,9 +679,14 @@ with tabs[1]:
     if APP.raw is None or APP.X_raw is None or not APP.X_cols:
         st.info("Select numeric feature columns (X) in the sidebar.")
     else:
-        X_df = APP.X_raw.copy()
+        df_full = APP.raw.copy()
+        X_df = _as_numeric_df(APP.X_raw.copy())  # samples x features (raw numeric)
 
         st.subheader("Preprocessing choices")
+
+        # ---------------------------------------
+        # Controls (organized)
+        # ---------------------------------------
         c1, c2, c3 = st.columns(3)
 
         with c1:
@@ -560,73 +700,595 @@ with tabs[1]:
             else:
                 imp = SimpleImputer(strategy=impute_strategy)
 
-        with c2:
-            scaling = st.selectbox(
-                "Scaling",
-                ["none", "standard (z-score)"],
-                index=1,
-                help="Start with standard scaling for PCA / many models.",
-            )
-            scaler = None if scaling == "none" else StandardScaler(with_mean=True, with_std=True)
-
-        with c3:
-            drop_zero_var = st.checkbox("Drop zero-variance features", value=True)
             missing_col_thresh = st.slider(
                 "Drop features with missing % above",
                 0, 100, 90,
                 help="If a feature has too many missing values, you can drop it.",
             )
 
-        # Drop high-missing columns
+        with c2:
+            sample_norm = st.selectbox(
+                "Sample normalization",
+                [
+                    "None",
+                    "Sample-specific normalization (factor)",
+                    "Normalization by sum",
+                    "Normalization by median",
+                    "Normalization by a reference sample (PQN)",
+                    "Normalization by a pooled sample from group (group PQN)",
+                    "Normalization by reference feature",
+                    "Quantile normalization (suggested only for > 1000 features)",
+                ],
+                index=0,
+            )
+
+            transform = st.selectbox(
+                "Data transformation",
+                [
+                    "None",
+                    "Log transformation (base 10)",
+                    "Log transformation (base 2)",
+                    "Square root transformation (square root of data values)",
+                    "Cube root transformation (cube root of data values)",
+                    "Variance stabilizing normalization (VSN)",
+                ],
+                index=0,
+            )
+
+        with c3:
+            alignment = st.selectbox(
+                "Alignment / batch correction",
+                [
+                    "None",
+                    "Center within batch (subtract batch mean)",
+                    "Center within batch (subtract batch median)",
+                ],
+                index=0,
+                help="Optional. Requires a batch column in your table (metadata column in APP.raw).",
+            )
+
+            scaling = st.selectbox(
+                "Scaling (feature-wise)",
+                ["none", "standard (z-score)"],
+                index=1,
+                help="Typical for PCA / many models.",
+            )
+            scaler = None if scaling == "none" else StandardScaler(with_mean=True, with_std=True)
+
+            drop_zero_var = st.checkbox("Drop zero-variance features", value=True)
+
+        st.divider()
+        st.subheader("Extra parameters (only when needed)")
+
+        # Identify metadata candidates in APP.raw (anything not in X_cols)
+        meta_candidates = [c for c in df_full.columns if c not in (APP.X_cols or [])]
+
+        # sample-specific factor column (weight/volume/etc.)
+        factor_col = None
+        if sample_norm == "Sample-specific normalization (factor)":
+            num_meta = [c for c in meta_candidates if pd.api.types.is_numeric_dtype(df_full[c])]
+            factor_col = st.selectbox(
+                "Factor column (numeric, same rows as samples)",
+                options=["(select)"] + num_meta,
+                index=0,
+                help="Example: sample weight, dilution factor, volume, biomass, etc.",
+            )
+            if factor_col == "(select)":
+                factor_col = None
+
+        # PQN reference sample selection
+        ref_sample_id = None
+        if sample_norm == "Normalization by a reference sample (PQN)":
+            if APP.id_col and APP.id_col in df_full.columns:
+                ref_sample_id = st.selectbox(
+                    "Reference sample (for PQN)",
+                    options=df_full[APP.id_col].astype(str).tolist(),
+                    index=0,
+                )
+            else:
+                st.warning("PQN needs SampleID available (APP.id_col). Add/keep SampleID in your mapped data.")
+
+        # group PQN requires y / class column
+        group_labels = None
+        if sample_norm == "Normalization by a pooled sample from group (group PQN)":
+            if APP.y_col and APP.y_col in df_full.columns:
+                group_labels = df_full[APP.y_col].astype(str)
+            else:
+                st.warning("Group PQN requires a group/class column (APP.y_col).")
+
+        # reference feature normalization
+        ref_feature = None
+        if sample_norm == "Normalization by reference feature":
+            ref_feature = st.selectbox(
+                "Reference feature (divide each sample by this feature)",
+                options=["(select)"] + (APP.X_cols or []),
+                index=0,
+            )
+            if ref_feature == "(select)":
+                ref_feature = None
+
+        # alignment requires batch column
+        batch_series = None
+        if alignment != "None":
+            batch_col = st.selectbox(
+                "Batch column (metadata)",
+                options=["(select)"] + meta_candidates,
+                index=0,
+                help="Example: Batch, Plate, RunDay, InjectionBlock, etc.",
+            )
+            if batch_col != "(select)":
+                batch_series = df_full[batch_col]
+            else:
+                st.warning("Alignment selected but no batch column chosen. Alignment will be skipped.")
+                batch_series = None
+                alignment = "None"
+
+        # ---------------------------------------
+        # Apply preprocessing in a transparent order
+        # ---------------------------------------
+
+        # 0) Drop high-missing features (based on raw numeric)
         miss_pct = X_df.isna().mean() * 100.0
         keep_cols = miss_pct[miss_pct <= missing_col_thresh].index.tolist()
         dropped_missing = [c for c in X_df.columns if c not in keep_cols]
         X_df = X_df[keep_cols]
 
-        # Drop zero-variance columns (after imputation/scaling we will check again later, but do now too)
+        # 1) Impute (feature-wise, using selected strategy)
+        X_imp = imp.fit_transform(X_df.values)
+        X_imp_df = pd.DataFrame(X_imp, index=X_df.index, columns=X_df.columns)
+
+        # 2) Sample normalization (row-wise)
+        sample_factor = df_full[factor_col] if factor_col else None
+
+        ref_sample_series = None
+        if sample_norm == "Normalization by a reference sample (PQN)" and ref_sample_id is not None:
+            idx = df_full[APP.id_col].astype(str) == str(ref_sample_id)
+            if idx.sum() != 1:
+                st.error("Could not uniquely identify the reference sample for PQN.")
+                st.stop()
+            ref_sample_series = X_imp_df.loc[idx.values].iloc[0]
+
+        try:
+            X_norm_df = sample_normalize(
+                X_imp_df,
+                method=sample_norm,
+                sample_factor=sample_factor,
+                ref_sample=ref_sample_series,
+                ref_feature=ref_feature,
+                group_labels=group_labels,
+            )
+        except Exception as e:
+            st.error(f"Sample normalization failed: {e}")
+            st.stop()
+
+        # 3) Data transformation (elementwise)
+        try:
+            X_tr_df = transform_data(X_norm_df, method=transform)
+        except Exception as e:
+            st.error(f"Transformation failed: {e}")
+            st.stop()
+
+        # 4) Alignment / batch correction (optional)
+        try:
+            X_al_df = batch_align(X_tr_df, batch=batch_series, method=alignment)
+        except Exception as e:
+            st.error(f"Alignment failed: {e}")
+            st.stop()
+
+        # sanitize after norm/transform/alignment (log/division may create inf/NaN)
+        X_al_df = X_al_df.replace([np.inf, -np.inf], np.nan)
+
+        # final imputation to guarantee PCA/models never see NaN
+        final_imp = SimpleImputer(strategy="median")
+        X_al_df.loc[:, :] = final_imp.fit_transform(X_al_df.values)
+
+        # 5) Drop zero-variance (AFTER final imputation is safest)
         if drop_zero_var:
-            vari = X_df.var(axis=0, skipna=True)
+            vari = X_al_df.var(axis=0, skipna=True)
             keep2 = vari[vari > 0].index.tolist()
-            dropped_zero = [c for c in X_df.columns if c not in keep2]
-            X_df = X_df[keep2]
+            dropped_zero = [c for c in X_al_df.columns if c not in keep2]
+            X_al_df = X_al_df[keep2]
         else:
             dropped_zero = []
 
-        # Pipeline to produce processed X
-        steps = [("imputer", imp)]
+        # 6) Scaling (feature-wise)
         if scaler is not None:
-            steps.append(("scaler", scaler))
-        pipe = Pipeline(steps)
-        X_proc = pipe.fit_transform(X_df.values)
-        APP.X_proc = X_proc
-        APP.feature_names = X_df.columns.tolist()
+            X_proc = scaler.fit_transform(X_al_df.values)
+        else:
+            X_proc = X_al_df.values
 
-        st.success(f"Processed X: {X_proc.shape[0]} samples × {X_proc.shape[1]} features")
+        # Store to app state
+        APP.X_proc = np.asarray(X_proc, dtype=float)
+        APP.feature_names = X_al_df.columns.tolist()
+
+        st.success(f"Processed X: {APP.X_proc.shape[0]} samples × {APP.X_proc.shape[1]} features")
         if dropped_missing:
             st.warning(f"Dropped (missingness): {len(dropped_missing)} features")
         if dropped_zero:
             st.warning(f"Dropped (zero variance): {len(dropped_zero)} features")
 
+        # ---------------------------------------
+        # Visualization: before vs after
+        # ---------------------------------------
         st.divider()
-        st.subheader("Before vs After: example feature distributions")
+        st.subheader("Before vs After (visual checks)")
+        figs_local = {}
+
+        # Matrices aligned to final feature list
+        feat_labels = APP.feature_names
+        raw_mat = _as_numeric_df(APP.X_raw.copy()).reindex(columns=feat_labels)
+        proc_mat = pd.DataFrame(APP.X_proc, index=raw_mat.index, columns=feat_labels)
+
+        # Sample labels
+        if APP.id_col and APP.id_col in df_full.columns:
+            sample_names_all = df_full[APP.id_col].astype(str).tolist()
+        else:
+            sample_names_all = [f"Sample_{i}" for i in range(raw_mat.shape[0])]
+
+        # ======================================================
+        # A) DISTRIBUTION FOR EVERY SAMPLE (across features)
+        # ======================================================
+        with st.expander("Distributions: EVERY SAMPLE (across features) — raw vs processed", expanded=False):
+            st.caption(
+                "Each violin is one sample. Values are all features within that sample. "
+                "This is the clearest view for sample-wise normalization effects."
+            )
+
+            max_show = st.slider(
+                "How many samples to show (violin view)",
+                min_value=2,
+                max_value=min(200, raw_mat.shape[0]),
+                value=min(40, raw_mat.shape[0]),
+                help="Hundreds are possible but heavy; ~20–60 is ideal for teaching.",
+                key="dist_samples_n",
+            )
+            idx_show = list(range(min(max_show, raw_mat.shape[0])))
+
+            # ---- Violin (each sample) ----
+            fig = go.Figure()
+            for i in idx_show:
+                vals = raw_mat.iloc[i].values
+                vals = vals[np.isfinite(vals)]
+                fig.add_trace(
+                    go.Violin(
+                        y=vals,
+                        name=f"{sample_names_all[i]} (raw)",
+                        side="negative",
+                        width=0.9,
+                        points=False,
+                        showlegend=False,
+                        meanline_visible=True,
+                    )
+                )
+            for i in idx_show:
+                vals = proc_mat.iloc[i].values
+                vals = vals[np.isfinite(vals)]
+                fig.add_trace(
+                    go.Violin(
+                        y=vals,
+                        name=f"{sample_names_all[i]} (processed)",
+                        side="positive",
+                        width=0.9,
+                        points=False,
+                        showlegend=False,
+                        meanline_visible=True,
+                    )
+                )
+
+            fig.update_layout(
+                title="Every sample distribution (across features): RAW (left) vs PROCESSED (right)",
+                yaxis_title="Feature intensity (within-sample distribution)",
+                xaxis_title="Samples (stacked violins)",
+                violingap=0.02,
+                violinmode="overlay",
+                height=650,
+                dragmode="zoom",
+            )
+            st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
+            key = "preprocess_dist_every_sample_violin"
+            store_fig(key, fig)
+            add_download_html_button(fig, "Download HTML: distributions per sample (violin)", key)
+            figs_local[key] = fig
+
+            # ---- RESULT distributions (global + sample-summary) ----
+            st.divider()
+            st.subheader("Resulting distributions (EVERY SAMPLE)")
+
+            # 1) GLOBAL distribution of all values (flattened)
+            raw_vals = raw_mat.iloc[idx_show].to_numpy().ravel()
+            proc_vals = proc_mat.iloc[idx_show].to_numpy().ravel()
+            raw_vals = raw_vals[np.isfinite(raw_vals)]
+            proc_vals = proc_vals[np.isfinite(proc_vals)]
+
+            df_global = pd.DataFrame(
+                {
+                    "value": np.concatenate([raw_vals, proc_vals]),
+                    "stage": (["raw"] * len(raw_vals)) + (["processed"] * len(proc_vals)),
+                }
+            )
+
+            fig_global = px.histogram(
+                df_global,
+                x="value",
+                color="stage",
+                barmode="overlay",
+                nbins=80,
+                title="GLOBAL distribution of all values (samples×features): RAW vs PROCESSED",
+            )
+            fig_global.update_layout(dragmode="zoom")
+            st.plotly_chart(fig_global, use_container_width=True, config={"displaylogo": False})
+            key = "preprocess_result_global_values_samples"
+            store_fig(key, fig_global)
+            add_download_html_button(fig_global, "Download HTML: global values (every sample)", key)
+            figs_local[key] = fig_global
+
+            # 2) Distribution across samples of sample-wise summaries
+            def _sample_stats(mat: pd.DataFrame) -> pd.DataFrame:
+                arr = mat.to_numpy()
+                return pd.DataFrame(
+                    {
+                        "mean": np.nanmean(arr, axis=1),
+                        "median": np.nanmedian(arr, axis=1),
+                        "sum": np.nansum(arr, axis=1),
+                        "std": np.nanstd(arr, axis=1),
+                    }
+                )
+
+            s_raw = _sample_stats(raw_mat.iloc[idx_show])
+            s_raw["stage"] = "raw"
+            s_proc = _sample_stats(proc_mat.iloc[idx_show])
+            s_proc["stage"] = "processed"
+
+            df_stats = pd.concat([s_raw, s_proc], ignore_index=True).melt(
+                id_vars=["stage"], var_name="stat", value_name="value"
+            )
+
+            fig_stats = px.violin(
+                df_stats,
+                x="stat",
+                y="value",
+                color="stage",
+                box=True,
+                points=False,
+                title="Sample-wise summaries (distribution across samples): RAW vs PROCESSED",
+            )
+            fig_stats.update_layout(dragmode="zoom")
+            st.plotly_chart(fig_stats, use_container_width=True, config={"displaylogo": False})
+            key = "preprocess_result_sample_summaries"
+            store_fig(key, fig_stats)
+            add_download_html_button(fig_stats, "Download HTML: sample summaries", key)
+            figs_local[key] = fig_stats
+
+        # ======================================================
+        # B) DISTRIBUTION FOR EVERY FEATURE (across samples)
+        #   NOW WITH 3 STAGES:
+        #     1) RAW (as loaded; may have NaN)
+        #     2) PRE-SCALE (after impute + norm + transform + alignment + final impute; BUT BEFORE scaling)
+        #     3) PROCESSED (after scaling, if chosen)
+        # ======================================================
+        with st.expander("Distributions: EVERY FEATURE (across samples) — raw vs pre-scale vs processed", expanded=False):
+            st.caption(
+                "Each violin is one feature. Values are all samples for that feature.\n"
+                "Stages:\n"
+                "• RAW = original values\n"
+                "• PRE-SCALE = after normalization/transform/alignment (no scaling)\n"
+                "• PROCESSED = final matrix (after scaling, if enabled)"
+            )
+
+            max_feat_show = st.slider(
+                "How many features to show (violin view)",
+                min_value=5,
+                max_value=min(300, len(feat_labels)),
+                value=min(60, len(feat_labels)),
+                help="Start with 40–100 for teaching. Thousands become heavy.",
+                key="dist_features_n",
+            )
+
+            mode = st.radio(
+                "Feature selection mode",
+                ["First N features", "Choose features manually"],
+                horizontal=True,
+                key="dist_features_mode",
+            )
+
+            if mode == "First N features":
+                feat_show = feat_labels[:max_feat_show]
+            else:
+                feat_show = st.multiselect(
+                    "Pick features",
+                    options=feat_labels,
+                    default=feat_labels[: min(max_feat_show, len(feat_labels))],
+                    key="dist_features_pick",
+                )
+                if len(feat_show) > max_feat_show:
+                    feat_show = feat_show[:max_feat_show]
+                    st.info(f"Showing first {max_feat_show} of your selection (performance cap).")
+
+            # ---------- MATRICES ----------
+            # RAW (may contain NaN/inf)
+            raw_mat = _as_numeric_df(APP.X_raw.copy()).reindex(columns=feat_labels)
+            raw_mat = raw_mat.replace([np.inf, -np.inf], np.nan)
+
+            # PRE-SCALE: X_al_df is your "final non-scaled" dataframe (right before scaler.fit_transform)
+            # Ensure it exists in this scope: it is created above in your preprocessing flow.
+            pre_scale_mat = X_al_df.reindex(columns=feat_labels)  # already imputed + cleaned earlier
+            pre_scale_mat = pre_scale_mat.replace([np.inf, -np.inf], np.nan)
+
+            # PROCESSED (scaled if selected, else equals pre-scale numerically)
+            proc_mat = pd.DataFrame(APP.X_proc, index=raw_mat.index, columns=feat_labels)
+            proc_mat = proc_mat.replace([np.inf, -np.inf], np.nan)
+
+            # ---------- VIOLIN PLOT (each feature) ----------
+            fig = go.Figure()
+
+            # RAW (left)
+            for f in feat_show:
+                vals = raw_mat[f].values
+                vals = vals[np.isfinite(vals)]
+                fig.add_trace(
+                    go.Violin(
+                        y=vals,
+                        name=f"{f} (raw)",
+                        side="negative",
+                        width=0.9,
+                        points=False,
+                        showlegend=False,
+                        meanline_visible=True,
+                    )
+                )
+
+            # PRE-SCALE (middle overlay)
+            # Note: Plotly violin doesn't have a true "middle"; we'll overlay with smaller width and higher opacity.
+            for f in feat_show:
+                vals = pre_scale_mat[f].values
+                vals = vals[np.isfinite(vals)]
+                fig.add_trace(
+                    go.Violin(
+                        y=vals,
+                        name=f"{f} (pre-scale)",
+                        side="both",
+                        width=0.35,
+                        points=False,
+                        showlegend=False,
+                        meanline_visible=True,
+                    )
+                )
+
+            # PROCESSED (right)
+            for f in feat_show:
+                vals = proc_mat[f].values
+                vals = vals[np.isfinite(vals)]
+                fig.add_trace(
+                    go.Violin(
+                        y=vals,
+                        name=f"{f} (processed)",
+                        side="positive",
+                        width=0.9,
+                        points=False,
+                        showlegend=False,
+                        meanline_visible=True,
+                    )
+                )
+
+            fig.update_layout(
+                title="Every feature distribution (across samples): RAW (left) vs PRE-SCALE (center) vs PROCESSED (right)",
+                yaxis_title="Sample intensity (within-feature distribution)",
+                xaxis_title="Features (stacked violins)",
+                violingap=0.02,
+                violinmode="overlay",
+                height=650,
+                dragmode="zoom",
+            )
+
+            st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
+            key = "preprocess_dist_every_feature_violin_3stage"
+            store_fig(key, fig)
+            add_download_html_button(fig, "Download HTML: distributions per feature (3 stages)", key)
+            figs_local[key] = fig
+
+            # ---- RESULT distributions (global + feature-summary) ----
+            st.divider()
+            st.subheader("Resulting distributions (EVERY FEATURE)")
+
+            # 1) GLOBAL distribution of all values (flattened): RAW vs PRE-SCALE vs PROCESSED
+            raw_vals = raw_mat[feat_show].to_numpy().ravel()
+            pre_vals = pre_scale_mat[feat_show].to_numpy().ravel()
+            proc_vals = proc_mat[feat_show].to_numpy().ravel()
+
+            raw_vals = raw_vals[np.isfinite(raw_vals)]
+            pre_vals = pre_vals[np.isfinite(pre_vals)]
+            proc_vals = proc_vals[np.isfinite(proc_vals)]
+
+            df_global = pd.DataFrame(
+                {
+                    "value": np.concatenate([raw_vals, pre_vals, proc_vals]),
+                    "stage": (["raw"] * len(raw_vals)) + (["pre-scale"] * len(pre_vals)) + (["processed"] * len(proc_vals)),
+                }
+            )
+
+            fig_global = px.histogram(
+                df_global,
+                x="value",
+                color="stage",
+                barmode="overlay",
+                nbins=80,
+                title="GLOBAL distribution of all values (samples×features): RAW vs PRE-SCALE vs PROCESSED",
+            )
+            fig_global.update_layout(dragmode="zoom")
+            st.plotly_chart(fig_global, use_container_width=True, config={"displaylogo": False})
+            key = "preprocess_result_global_values_features_3stage"
+            store_fig(key, fig_global)
+            add_download_html_button(fig_global, "Download HTML: global values (3 stages)", key)
+            figs_local[key] = fig_global
+
+            # 2) Distribution across features of feature-wise summaries (3 stages)
+            def _feature_stats(mat: pd.DataFrame) -> pd.DataFrame:
+                arr = mat.to_numpy()
+                mean = np.nanmean(arr, axis=0)
+                std = np.nanstd(arr, axis=0)
+                med = np.nanmedian(arr, axis=0)
+                cv = std / np.where(np.abs(mean) < 1e-12, np.nan, np.abs(mean))
+                return pd.DataFrame({"mean": mean, "median": med, "std": std, "cv": cv})
+
+            f_raw = _feature_stats(raw_mat[feat_show]);       f_raw["stage"] = "raw"
+            f_pre = _feature_stats(pre_scale_mat[feat_show]); f_pre["stage"] = "pre-scale"
+            f_pro = _feature_stats(proc_mat[feat_show]);      f_pro["stage"] = "processed"
+
+            df_stats = pd.concat([f_raw, f_pre, f_pro], ignore_index=True).melt(
+                id_vars=["stage"], var_name="stat", value_name="value"
+            )
+
+            fig_stats = px.violin(
+                df_stats,
+                x="stat",
+                y="value",
+                color="stage",
+                box=True,
+                points=False,
+                title="Feature-wise summaries (distribution across features): RAW vs PRE-SCALE vs PROCESSED",
+            )
+            fig_stats.update_layout(dragmode="zoom")
+            st.plotly_chart(fig_stats, use_container_width=True, config={"displaylogo": False})
+            key = "preprocess_result_feature_summaries_3stage"
+            store_fig(key, fig_stats)
+            add_download_html_button(fig_stats, "Download HTML: feature summaries (3 stages)", key)
+            figs_local[key] = fig_stats
+
+        # ======================================================
+        # C) Per-feature selected histograms
+        # ======================================================
+        st.subheader("Before vs After: selected feature distributions (histograms)")
+        import random
         feat_pick = st.multiselect(
             "Pick features to compare",
             APP.feature_names,
-            default=APP.feature_names[: min(3, len(APP.feature_names))],
+            default=APP.feature_names[: min(0, len(APP.feature_names))],
+            key="preprocess_hist_pick",
         )
 
-        figs_local = {}
         for f in feat_pick:
-            idx = APP.feature_names.index(f)
+            before = pd.to_numeric(APP.X_raw[f], errors="coerce")
+            j = APP.feature_names.index(f)
+            after = pd.Series(APP.X_proc[:, j], name=f)
 
-            before = APP.X_raw[f].astype(float)
-            after = pd.Series(APP.X_proc[:, idx], name=f)
+            df_long = pd.DataFrame(
+                {
+                    "value": pd.concat(
+                        [before.reset_index(drop=True), after.reset_index(drop=True)],
+                        ignore_index=True,
+                    ),
+                    "stage": ["raw"] * len(before) + ["processed"] * len(after),
+                }
+            )
 
-            df_long = pd.DataFrame({"value": pd.concat([before, after], ignore_index=True),
-                                    "stage": ["raw"] * len(before) + ["processed"] * len(after)})
-
-            fig = px.histogram(df_long, x="value", color="stage", barmode="overlay", nbins=40,
-                               title=f"Raw vs Processed: {f}")
+            fig = px.histogram(
+                df_long,
+                x="value",
+                color="stage",
+                barmode="overlay",
+                nbins=40,
+                title=f"Raw vs Processed: {f}",
+            )
             st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
             key = f"preprocess_hist_{f}"
             store_fig(key, fig)
