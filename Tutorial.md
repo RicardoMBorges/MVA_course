@@ -615,19 +615,19 @@ Let:
 
 We define the data matrix:
 
-[
+$$
 \mathbf{X} \in \mathbb{R}^{n \times p}
-]
+$$
 
-[
+$$
 \mathbf{X} =
 \begin{bmatrix}
-x_{11} & x_{12} & \dots & x_{1p} \
-x_{21} & x_{22} & \dots & x_{2p} \
-\vdots & \vdots & \ddots & \vdots \
+x_{11} & x_{12} & \dots & x_{1p} \\\\
+x_{21} & x_{22} & \dots & x_{2p} \\\\
+\vdots & \vdots & \ddots & \vdots \\\\
 x_{n1} & x_{n2} & \dots & x_{np}
 \end{bmatrix}
-]
+$$
 
 * Rows = samples
 * Columns = variables
@@ -640,21 +640,21 @@ Each row is a vector in ( \mathbb{R}^p ).
 
 The mean of variable ( j ):
 
-[
-\bar{x}*j = \frac{1}{n} \sum*{i=1}^{n} x_{ij}
-]
+$$
+\bar{x}_j = \frac{1}{n} \sum_{i=1}^{n} x_{ij}
+$$
 
 Mean-centered data:
 
-[
+$$
 x'*{ij} = x*{ij} - \bar{x}_j
-]
+$$
 
 Matrix form:
 
-[
+$$
 \mathbf{X}_c = \mathbf{X} - \mathbf{1}\bar{\mathbf{x}}^T
-]
+$$
 
 where:
 
@@ -667,21 +667,21 @@ where:
 
 Standard deviation of variable ( j ):
 
-[
+$$
 s_j = \sqrt{\frac{1}{n-1} \sum_{i=1}^{n} (x_{ij} - \bar{x}_j)^2}
-]
+$$
 
 Scaled value:
 
-[
+$$
 x''*{ij} = \frac{x*{ij} - \bar{x}_j}{s_j}
-]
+$$
 
 Matrix form:
 
-[
+$$
 \mathbf{X}_{scaled} = \mathbf{X}_c \mathbf{D}^{-1}
-]
+$$
 
 Where:
 
@@ -693,15 +693,15 @@ Where:
 
 The covariance matrix:
 
-[
+$$
 \mathbf{S} = \frac{1}{n-1} \mathbf{X}_c^T \mathbf{X}_c
-]
+$$
 
 Dimensions:
 
-[
+$$
 \mathbf{S} \in \mathbb{R}^{p \times p}
-]
+$$
 
 Interpretation:
 
@@ -714,9 +714,9 @@ Interpretation:
 
 PCA finds eigenvectors of the covariance matrix:
 
-[
+$$
 \mathbf{S} \mathbf{v}_k = \lambda_k \mathbf{v}_k
-]
+$$
 
 Where:
 
@@ -725,9 +725,9 @@ Where:
 
 Principal components are ordered:
 
-[
+$$
 \lambda_1 \ge \lambda_2 \ge \dots \ge \lambda_p
-]
+$$
 
 ---
 
@@ -735,9 +735,9 @@ Principal components are ordered:
 
 Scores are projections of data onto eigenvectors:
 
-[
+$$
 \mathbf{T} = \mathbf{X}_c \mathbf{V}
-]
+$$
 
 Where:
 
@@ -752,9 +752,9 @@ Each column of ( \mathbf{T} ) is a principal component.
 
 Proportion of variance explained by PC k:
 
-[
+$$
 \frac{\lambda_k}{\sum_{j=1}^{p} \lambda_j}
-]
+$$
 
 ---
 
@@ -762,12 +762,12 @@ Proportion of variance explained by PC k:
 
 PLS models:
 
-[
+$$
 \mathbf{X} = \mathbf{T}\mathbf{P}^T + \mathbf{E}
-]
-[
+$$
+$$
 \mathbf{Y} = \mathbf{T}\mathbf{C}^T + \mathbf{F}
-]
+$$
 
 Where:
 
