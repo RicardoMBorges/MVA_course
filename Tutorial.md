@@ -1,293 +1,597 @@
-# 📊 Multivariate Data Analysis – Follow-Up Tutorial
+# 📘 Multivariate Data Analysis – Detailed Teaching Guide
 
-## From Raw Data to Biological Interpretation
-
----
-
-## 1️⃣ Why Multivariate Analysis?
-
-In metabolomics (and in many biological datasets), we rarely deal with a single variable.
-
-Instead, we measure:
-
-* Dozens to thousands of metabolites
-* Across multiple samples
-* Belonging to different experimental groups
-
-This means:
-
-> Each sample is not a single value.
-> Each sample is a **vector in multidimensional space**.
-
-Multivariate analysis allows us to:
-
-* Reduce dimensionality
-* Detect patterns
-* Identify group separation
-* Discover discriminant variables
-* Interpret biological meaning
+> This document is designed as a conceptual and practical guide for students learning multivariate data analysis in metabolomics and related biological sciences.
 
 ---
 
-## 2️⃣ Dataset Structure (MetaboAnalyst Format)
+# 1️⃣ What Is Multivariate Data?
 
-For this course, we follow the **MetaboAnalyst CSV format**.
+## Definition: Variable
 
-### Structure rules:
+A **variable** (also called a feature) is a measurable quantity.
 
-* First row → `ATTRIBUTE_class` (group labels)
-* First column → Feature names (metabolites)
-* Remaining columns → Sample intensities
+Examples:
+
+* Metabolite intensity
+* Peak area
+* Gene expression value
+* NMR bucket
+
+---
+
+## Definition: Sample
+
+A **sample** is one observation containing many variables.
+
+In metabolomics:
+
+* One injection
+* One biological replicate
+* One individual
+
+---
+
+## Definition: Multivariate Data
+
+Data are **multivariate** when each sample contains multiple variables.
+
+Mathematically:
+
+If we have:
+
+* *n* samples
+* *p* variables
+
+Then our dataset is an **n × p matrix**.
+
+Each sample is a point in **p-dimensional space**.
+
+---
+
+## Why Multivariate Analysis?
+
+Univariate analysis:
+
+* Tests one variable at a time.
+
+Multivariate analysis:
+
+* Considers all variables simultaneously.
+* Detects patterns that only emerge in combination.
+
+In biology:
+
+> Most biological phenomena are not driven by a single variable, but by coordinated changes.
+
+---
+
+# 2️⃣ Data Structure and Format
+
+## Data Matrix Structure
+
+We typically organize data as:
+
+| Feature ↓ / Sample → | S1  | S2  | S3  | S4  |
+| -------------------- | --- | --- | --- | --- |
+| Metabolite 1         | x11 | x12 | x13 | x14 |
+| Metabolite 2         | x21 | x22 | x23 | x24 |
+
+---
+
+## Definition: Data Matrix
+
+A **data matrix** is a rectangular table of numeric values representing measurements.
+
+Notation:
+
+* X = data matrix
+* xᵢⱼ = value of feature i in sample j
+
+---
+
+## Group Labels
+
+When working with experimental groups:
+
+* Control
+* Treated
+* Disease
+* Healthy
+
+These labels are stored separately (e.g., `ATTRIBUTE_class`).
+
+Important:
+
+> Group labels are not used in unsupervised methods.
+
+---
+
+# 3️⃣ Data Inspection
+
+Before any transformation:
+
+## Definition: Exploratory Data Analysis (EDA)
+
+EDA is the process of examining data to understand:
+
+* Distribution
+* Missingness
+* Outliers
+* Variability
+
+---
+
+## Definition: Distribution
+
+A **distribution** describes how values are spread across a range.
+
+Common properties:
+
+* Symmetry
+* Skewness
+* Presence of extreme values
+
+Metabolomics data are often:
+
+* Right-skewed
+* Heteroscedastic
+
+---
+
+## Definition: Heteroscedasticity
+
+Heteroscedasticity means:
+
+> The variance changes with the mean.
+
+Large peaks tend to have larger variance.
+
+This is one reason transformations are applied.
+
+---
+
+# 4️⃣ Missing Values
+
+## Definition: Missing Value
+
+A missing value is an observation that has no recorded numeric value.
+
+Represented as:
+
+* NA
+* null
+* empty cell
+
+---
+
+## Why Missing Values Occur
+
+* Below detection limit
+* Peak detection failure
+* Alignment failure
+* True biological absence
+
+---
+
+## Definition: Missingness Mechanisms
+
+There are three conceptual types:
+
+1. MCAR – Missing Completely At Random
+2. MAR – Missing At Random
+3. MNAR – Missing Not At Random
+
+In metabolomics, missingness is often MNAR (low abundance).
+
+---
+
+## Imputation
+
+### Definition: Imputation
+
+Imputation is the process of replacing missing values with estimated values.
+
+---
+
+### Common Imputation Methods
+
+#### Mean Imputation
+
+Replace missing values with the average of observed values.
+
+Effect:
+
+* Reduces variance artificially.
+
+#### Median Imputation
+
+Replace missing values with the median.
+
+More robust to outliers.
+
+#### Constant Imputation
+
+Replace missing values with zero or small value.
+
+Assumes missing = absence.
+
+---
+
+# 5️⃣ Transformation
+
+## Definition: Data Transformation
+
+A mathematical operation applied to data to change its scale or distribution.
+
+---
+
+## Log Transformation
+
+### Definition
+
+Log transformation replaces each value x with log(x).
+
+Common base:
+
+* log10
+* natural log (ln)
+
+---
+
+### Why Use Log?
+
+Log compresses large values more than small values.
 
 Example:
 
-```csv
-,Sample1,Sample2,Sample3,Sample4
-ATTRIBUTE_class,Control,Control,Treated,Treated
-Glucose,120,115,140,150
-Lactate,80,75,95,100
-Alanine,60,58,70,73
-```
+* log(1000) vs log(10)
+* Difference becomes smaller.
 
-Interpretation:
+Effect:
 
-* Rows = variables (metabolites)
-* Columns = samples
-* Class labels define biological grouping
+* Reduces skewness
+* Reduces heteroscedasticity
 
 ---
 
-## 3️⃣ Preprocessing: The Most Important Step
+## Important Concept: Monotonic Transformation
 
-Before PCA or PLS-DA, data must be cleaned.
+Log transformation is monotonic:
 
-### 3.1 Missing Values
-
-Common strategies:
-
-* Median imputation
-* Mean imputation
-* Constant (0)
-* Remove features above missing threshold
-
-⚠️ Important:
-Removing too many variables may remove biological meaning.
+* Order of values is preserved.
+* Relative ranking remains the same.
 
 ---
 
-### 3.2 Scaling
+# 6️⃣ Normalization
 
-Metabolites have different magnitudes.
+## Definition: Normalization
+
+Normalization adjusts values across samples to make them comparable.
+
+It corrects systematic sample-to-sample differences.
+
+---
+
+## Types of Normalization
+
+### Total Sum Normalization
+
+Each sample is divided by its total intensity.
+
+Purpose:
+
+* Correct injection differences.
+
+---
+
+### Internal Standard Normalization
+
+Each feature is divided by the signal of a reference compound.
+
+More chemically meaningful.
+
+---
+
+### PQN (Probabilistic Quotient Normalization)
+
+Common in NMR.
+Adjusts based on median fold change.
+
+---
+
+## Important Distinction
+
+Normalization acts across samples.
+
+Scaling acts across variables.
+
+These are different operations.
+
+---
+
+# 7️⃣ Scaling
+
+## Definition: Scaling
+
+Scaling adjusts the variance of variables so that they contribute equally (or more equally) to the model.
+
+---
+
+## Mean-Centering
+
+### Definition
+
+Subtract the mean of each variable.
+
+Formula:
+xᵢⱼ → xᵢⱼ − mean(xᵢ)
+
+Effect:
+
+* Data centered around zero.
+
+---
+
+## Autoscaling (Unit Variance Scaling)
+
+### Definition
+
+Subtract mean and divide by standard deviation.
+
+Formula:
+xᵢⱼ → (xᵢⱼ − mean(xᵢ)) / sd(xᵢ)
+
+Effect:
+
+* All variables have variance = 1.
+
+---
+
+## Pareto Scaling
+
+Divide by square root of standard deviation.
+
+Compromise between no scaling and autoscaling.
+
+---
+
+## Why Scaling Matters
+
+Without scaling:
+
+* High-intensity metabolites dominate PCA.
+
+With scaling:
+
+* Small metabolites gain influence.
+
+Scaling is a modeling decision.
+
+---
+
+# 8️⃣ PCA (Principal Component Analysis)
+
+## Definition
+
+PCA is an unsupervised dimensionality reduction method.
+
+It finds linear combinations of variables that capture maximal variance.
+
+---
+
+## Definition: Principal Component
+
+A principal component is:
+
+> A weighted linear combination of original variables.
+
+PC1 = w1x1 + w2x2 + ... + wpxp
+
+Weights are chosen to maximize variance.
+
+---
+
+## Definition: Variance
+
+Variance measures how spread out data are.
+
+High variance = large dispersion.
+
+PCA captures directions of maximum variance.
+
+---
+
+## Scores and Loadings
+
+### Score
+
+Coordinates of samples in PC space.
+
+Represent:
+
+* Samples
+
+---
+
+### Loading
+
+Weights that define each principal component.
+
+Represent:
+
+* Variable contributions
+
+---
+
+## Orthogonality
+
+Principal components are orthogonal:
+
+* They are statistically independent.
+* Dot product = 0.
+
+---
+
+# 9️⃣ Supervised Methods
+
+## Definition: Supervised Learning
+
+A method that uses known class labels during model training.
 
 Example:
 
-* Glucose: 100–1000
-* Cytokine: 0.01–2
-
-Without scaling, large variables dominate PCA.
-
-Common scaling:
-
-| Method         | Effect                     |
-| -------------- | -------------------------- |
-| None           | Raw magnitude preserved    |
-| Mean-centering | Centers data               |
-| Autoscaling    | Mean-center + divide by SD |
-| Pareto scaling | Divide by √SD              |
-
-In metabolomics, **autoscaling** is often used.
+* PLS-DA
 
 ---
 
-## 4️⃣ Principal Component Analysis (PCA)
+## PLS-DA
 
-PCA is an **unsupervised method**.
+### Definition
 
-It answers:
+Partial Least Squares Discriminant Analysis.
 
-> Do samples naturally cluster?
+A regression-based method adapted for classification.
 
-### Conceptually:
+It finds components that:
 
-* Original data = high dimensional space
-* PCA finds new axes (principal components)
-* These axes maximize variance
-
-PC1 → largest variance
-PC2 → second largest variance
+* Maximize covariance between X (data) and Y (class labels).
 
 ---
 
-### Interpretation of PCA Score Plot
+## Covariance
 
-* Each point = one sample
-* Distance between points = similarity
-* Separation suggests systematic differences
+Covariance measures how two variables vary together.
 
-If groups separate without supervision:
+High covariance:
 
-👉 Strong biological signal.
+* When one increases, the other tends to increase.
 
----
-
-### Loading Plot
-
-Loadings tell us:
-
-> Which variables drive separation?
-
-High absolute loading values → strong influence
-
-Interpretation must consider:
-
-* Biological plausibility
-* Analytical reliability
-* Scaling method used
+PLS-DA maximizes covariance between features and class membership.
 
 ---
 
-📌 *[Insert PCA score plot image here]*
-📌 *[Insert PCA loading plot image here]*
+# 🔟 Model Evaluation
+
+## R²
+
+Explained variance.
+
+Measures how well model fits training data.
 
 ---
 
-## 5️⃣ Supervised Methods: PLS-DA
+## Q²
 
-Unlike PCA:
+Predictive ability estimated by cross-validation.
 
-PLS-DA uses group information.
-
-It tries to:
-
-> Maximize separation between predefined classes.
-
-PLS-DA is powerful, but dangerous if misused.
+Measures generalizability.
 
 ---
 
-### Why Dangerous?
+## Overfitting
 
-Because it will **always try to separate groups**, even if separation is weak.
+### Definition
 
-Therefore:
+Overfitting occurs when a model learns noise instead of signal.
 
-* Cross-validation is mandatory
-* Permutation testing is recommended
-* Avoid overfitting
+Characteristics:
 
----
-
-### Model Evaluation Metrics
-
-| Metric   | Meaning                    |
-| -------- | -------------------------- |
-| R²       | Explained variance         |
-| Q²       | Predictive ability         |
-| Accuracy | Classification performance |
-
-If:
-
-* R² high
-* Q² low
-
-👉 Model likely overfitted.
+* Excellent training performance
+* Poor prediction performance
 
 ---
 
-📌 *[Insert PLS-DA score plot here]*
+## Cross-Validation
+
+Repeatedly splitting data into training and test subsets.
+
+Purpose:
+
+* Estimate model robustness.
 
 ---
 
-## 6️⃣ VIP Scores (Variable Importance in Projection)
+## Permutation Test
 
-VIP identifies variables most responsible for class separation.
+Randomly shuffle class labels and refit model.
 
-General rule:
+If shuffled model performs similarly:
 
-* VIP > 1 → important variable
-
-But:
-
-VIP must be interpreted together with:
-
-* Fold change
-* p-value
-* Biological context
-
-Never rely on VIP alone.
+* Original model not meaningful.
 
 ---
 
-## 7️⃣ Biological Interpretation
+# 1️⃣1️⃣ VIP (Variable Importance in Projection)
 
-Statistics do not give biology automatically.
+## Definition
 
-After identifying important features:
+VIP quantifies how much each variable contributes to class separation in PLS-DA.
+
+Common rule:
+VIP > 1 = important.
+
+But this is heuristic, not absolute truth.
+
+---
+
+# 1️⃣2️⃣ Outliers
+
+## Definition
+
+An outlier is a sample that deviates strongly from others.
+
+Possible causes:
+
+* Biological uniqueness
+* Experimental error
+* Instrumental issue
+
+Outliers must be investigated, not blindly removed.
+
+---
+
+# 1️⃣3️⃣ Dimensionality Reduction
+
+## Definition
+
+Reducing number of variables while retaining essential information.
+
+Original dimension = p
+Reduced dimension = k (k << p)
+
+Benefits:
+
+* Visualization
+* Noise reduction
+* Computational efficiency
+
+---
+
+# 1️⃣4️⃣ Biological Interpretation
+
+Statistics detect structure.
+
+Interpretation assigns meaning.
 
 Ask:
 
-* Are these metabolites biochemically related?
-* Are they in the same pathway?
-* Do they make physiological sense?
+* Are discriminant features chemically related?
+* Do they share biosynthetic pathways?
+* Do they match phenotype?
 
-Multivariate analysis is:
+Multivariate analysis:
 
-> A hypothesis generator, not a final answer.
-
----
-
-## 8️⃣ Common Mistakes in Multivariate Analysis
-
-❌ Using raw data without scaling
-❌ Not checking missing values
-❌ Trusting PLS-DA without validation
-❌ Ignoring batch effects
-❌ Overinterpreting small separations
+> Is a structured way of asking better biological questions.
 
 ---
 
-## 9️⃣ Recommended Workflow
+# 📌 Final Teaching Principle
 
-1. Inspect raw data
-2. Remove obvious artifacts
-3. Handle missing values
-4. Scale appropriately
-5. Run PCA
-6. Interpret structure
-7. Run supervised method (if justified)
-8. Validate model
-9. Interpret biologically
+Students must understand:
 
----
-
-## 🔟 Final Conceptual Takeaway
-
-Multivariate analysis is about:
-
-* Structure
-* Variance
-* Patterns
-* Biological meaning
-
-It is not about:
-
-* Pretty plots
-* Forced separation
-* Statistical decoration
-
-The goal is:
-
-> Transform multidimensional complexity into interpretable biological insight.
-
----
-
-# 🚀 What’s Next?
-
-In the next module we will explore:
-
-* Model validation strategies
-* Cross-validation in practice
-* Permutation testing
-* Avoiding overfitting
-* Real metabolomics case study
+* Every preprocessing step is a modeling decision.
+* Every transformation changes the geometry of the data.
+* Every supervised model must be validated.
+* Multivariate analysis reveals patterns — it does not create truth.
 
