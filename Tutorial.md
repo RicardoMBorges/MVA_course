@@ -1,4 +1,4 @@
-# 📘 Multivariate Data Analysis – Detailed Teaching Guide
+# Multivariate Data Analysis – Detailed Teaching Guide
 
 > This document is designed as a conceptual and practical guide for students learning multivariate data analysis in metabolomics and related biological sciences.
 
@@ -327,7 +327,10 @@ Scaling adjusts the variance of variables so that they contribute equally (or mo
 Subtract the mean of each variable.
 
 Formula:
+
+$$
 xᵢⱼ → xᵢⱼ − mean(xᵢ)
+$$
 
 Effect:
 
@@ -342,7 +345,10 @@ Effect:
 Subtract mean and divide by standard deviation.
 
 Formula:
+
+$$
 xᵢⱼ → (xᵢⱼ − mean(xᵢ)) / sd(xᵢ)
+$$
 
 Effect:
 
@@ -388,7 +394,9 @@ A principal component is:
 
 > A weighted linear combination of original variables.
 
+$$
 PC1 = w1x1 + w2x2 + ... + wpxp
+$$
 
 Weights are chosen to maximize variance.
 
