@@ -52,6 +52,11 @@ for logo_name in ["LAABio.png"]: #"logo_massQL.png",
     except Exception:
         pass
 
+st.sidebar.divider()
+if st.sidebar.button("🧹 Clear stored figures"):
+    st.session_state["figs"] = {}
+    st.sidebar.success("Stored figures cleared.")
+    
 
 # -------------------------
 # Helpers
@@ -66,8 +71,8 @@ def _safe_filename(s: str) -> str:
 
 
 def fig_to_html_bytes(fig: go.Figure) -> bytes:
-    # self-contained HTML with plotly.js included
-    html = fig.to_html(full_html=True, include_plotlyjs="cdn")
+    # truly self-contained (bigger files, but works offline)
+    html = fig.to_html(full_html=True, include_plotlyjs="inline")
     return html.encode("utf-8")
 
 
@@ -114,10 +119,10 @@ def try_read_table(uploaded_file) -> pd.DataFrame:
 def parse_course_table(
     df: pd.DataFrame,
     row_label_col: str,
-    sample_cols: list[str],
-    class_row_label: str | None,
-    feature_rows: list[str],
-) -> tuple[pd.DataFrame, pd.Series | None]:
+    sample_cols: List[str],
+    class_row_label: Optional[str],
+    feature_rows: List[str],
+) -> Tuple[pd.DataFrame, Optional[pd.Series]]:
     """
     Accepts course/MetaboAnalyst-like layout:
       - columns = samples
@@ -206,12 +211,19 @@ class AppData:
 
     X_proc: Optional[np.ndarray] = None
     feature_names: Optional[List[str]] = None
+    X_pre_scale: Optional[pd.DataFrame] = None
 
 
 if "app" not in st.session_state:
     st.session_state["app"] = AppData()
 
 APP: AppData = st.session_state["app"]
+
+st.sidebar.divider()
+if st.sidebar.button("🧹 Clear APP data (reset preprocessing/models)"):
+    st.session_state["app"] = AppData()
+    APP = st.session_state["app"]
+    st.sidebar.success("APP state reset.")
 
 # Keep figures for "download all"
 if "figs" not in st.session_state:
@@ -225,6 +237,29 @@ def store_fig(key: str, fig: go.Figure):
 # --------- Math funtions for Normalization
 def _as_numeric_df(X_df: pd.DataFrame) -> pd.DataFrame:
     return X_df.apply(pd.to_numeric, errors="coerce")
+
+def quantile_normalize_rows(X: pd.DataFrame) -> pd.DataFrame:
+    """
+    Quantile normalization across samples (rows), treating each sample distribution equally.
+    X is samples x features.
+    Returns samples x features.
+    """
+    # work as numpy for speed
+    A = X.to_numpy(dtype=float, copy=True)      # (n_samples, n_features)
+    At = A.T                                    # (n_features, n_samples)
+
+    # argsort each sample (column in At)
+    order = np.argsort(At, axis=0)              # (n_features, n_samples)
+    sorted_vals = np.take_along_axis(At, order, axis=0)
+
+    # average across samples at each rank
+    mean_sorted = np.nanmean(sorted_vals, axis=1)   # (n_features,)
+
+    # put the mean_sorted back into original positions (inverse sort)
+    out = np.empty_like(At)
+    np.put_along_axis(out, order, mean_sorted[:, None], axis=0)
+
+    return pd.DataFrame(out.T, index=X.index, columns=X.columns)
 
 
 def sample_normalize(
@@ -245,6 +280,9 @@ def sample_normalize(
     if method == "None":
         return Xn
 
+    # -----------------------------------------------------
+    # Sample-specific factor normalization
+    # -----------------------------------------------------
     if method == "Sample-specific normalization (factor)":
         if sample_factor is None:
             raise ValueError("sample_factor is required for sample-specific normalization.")
@@ -253,6 +291,9 @@ def sample_normalize(
             raise ValueError("Sample factor has missing/non-numeric values.")
         return Xn.div(f.values, axis=0)
 
+    # -----------------------------------------------------
+    # Simple row scalings
+    # -----------------------------------------------------
     if method == "Normalization by sum":
         s = Xn.sum(axis=1).replace(0, np.nan)
         return Xn.div(s.values, axis=0)
@@ -261,48 +302,64 @@ def sample_normalize(
         m = Xn.median(axis=1).replace(0, np.nan)
         return Xn.div(m.values, axis=0)
 
+    # -----------------------------------------------------
+    # PQN (reference sample)
+    # -----------------------------------------------------
     if method == "Normalization by a reference sample (PQN)":
         if ref_sample is None:
             raise ValueError("ref_sample is required for PQN.")
+
         ref = pd.to_numeric(ref_sample, errors="coerce").astype(float)
-        quot = Xn.div(ref.values + eps, axis=1)  # sample/feature-wise quotient
+
+        # Xn: (samples x features)
+        # ref: (features,)
+        quot = Xn.div(ref.values + eps, axis=1)
         factors = quot.median(axis=1).replace(0, np.nan)
+
         return Xn.div(factors.values, axis=0)
 
+    # -----------------------------------------------------
+    # Group PQN
+    # -----------------------------------------------------
     if method == "Normalization by a pooled sample from group (group PQN)":
         if group_labels is None:
             raise ValueError("group_labels is required for group PQN.")
+
         gl = group_labels.astype(str)
         Xout = Xn.copy()
+
         for g in gl.unique():
             idx = gl == g
-            ref = Xn.loc[idx].median(axis=0)  # pooled reference spectrum for group
+            ref = Xn.loc[idx].median(axis=0)  # pooled reference per group
             quot = Xn.loc[idx].div(ref.values + eps, axis=1)
             factors = quot.median(axis=1).replace(0, np.nan)
             Xout.loc[idx] = Xn.loc[idx].div(factors.values, axis=0)
+
         return Xout
 
+    # -----------------------------------------------------
+    # Reference feature normalization
+    # -----------------------------------------------------
     if method == "Normalization by reference feature":
         if ref_feature is None:
             raise ValueError("ref_feature is required for reference-feature normalization.")
         if ref_feature not in Xn.columns:
             raise ValueError(f"Reference feature '{ref_feature}' not found in X.")
+
         f = Xn[ref_feature].replace(0, np.nan)
         return Xn.div(f.values, axis=0)
 
+    # -----------------------------------------------------
+    # Quantile normalization
+    # -----------------------------------------------------
     if method == "Quantile normalization":
-        # Make each SAMPLE (row) have the same distribution across features
-        # Implement quantile normalization on rows by applying column-wise QN to X.T
-        Xt = Xn.T  # features x samples
-        # sort each column (sample)
-        sorted_vals = np.sort(Xt.values, axis=0)
-        mean_sorted = np.mean(sorted_vals, axis=1)
-        # rank-based assignment per column
-        ranks = Xt.rank(method="average").astype(int) - 1  # 0..p-1
-        qn = Xt.copy()
-        for j in range(Xt.shape[1]):
-            qn.iloc[:, j] = ranks.iloc[:, j].map(lambda r: mean_sorted[r]).values
-        return qn.T
+        n_samp, n_feat = Xn.shape
+        if n_samp * n_feat > 5_000_000:
+            raise ValueError(
+                f"Quantile normalization is too heavy for this size ({n_samp}×{n_feat}). "
+                "Reduce features/samples or use another normalization."
+            )
+        return quantile_normalize_rows(Xn)
 
     raise ValueError(f"Unknown sample normalization method: {method}")
 
@@ -313,12 +370,15 @@ def transform_data(X: pd.DataFrame, method: str, eps: float = 1e-12) -> pd.DataF
     if method == "None":
         return Xt
 
+    if method in {"Log transformation (base 10)", "Log transformation (base 2)"}:
+        if (Xt.values < 0).any():
+            raise ValueError("Log transform selected but data contains negative values (often from batch centering).")
+
     if method == "Log transformation (base 10)":
         return np.log10(Xt + eps)
 
     if method == "Log transformation (base 2)":
         return np.log2(Xt + eps)
-
     if method == "Square root transformation":
         return np.sqrt(np.clip(Xt, a_min=0, a_max=None))
 
@@ -472,6 +532,12 @@ if df_u is not None and not df_u.empty:
             # X columns are numeric features (after transpose)
             APP.X_cols = [c for c in APP.raw.columns if c not in {"SampleID", "ATTRIBUTE_class"}]
             st.sidebar.success(f"Mapped OK: {X_df.shape[0]} samples × {X_df.shape[1]} features")
+            # Reset downstream state (new mapping => preprocessing must be rerun)
+            APP.X_proc = None
+            APP.feature_names = None
+            APP.X_pre_scale = None
+            st.session_state["preprocess_ran"] = False
+
 
         except Exception as e:
             st.sidebar.error(f"Mapping failed: {e}")
@@ -572,103 +638,72 @@ with tabs[0]:
         help="Be carefull! This is only a general view.")
     with st.expander("Raw PCA (no normalization / no scaling)", expanded=False):
 
-        # Requirements: need X columns selected (numeric features)
         if APP.X_cols and APP.raw is not None:
             df = APP.raw.copy()
 
-            # Build raw X and drop rows with any missing values (raw PCA should be simple/transparent)
             X_raw_df = df[APP.X_cols].apply(pd.to_numeric, errors="coerce")
-            n_before = X_raw_df.shape[0]
-            X_raw_df = X_raw_df.dropna(axis=0, how="any")
-            n_after = X_raw_df.shape[0]
 
-            if n_after < 3:
-                st.warning("Not enough complete samples for raw PCA after dropping missing values.")
+            # --- NEW: minimal imputation for PCA feasibility ---
+            miss_pct = float(X_raw_df.isna().mean().mean() * 100)
+            st.caption(f"Raw PCA: overall missingness ~ {miss_pct:.1f}%")
+
+            # Drop features that are *mostly* missing (optional but helpful)
+            col_miss = X_raw_df.isna().mean()
+            keep_cols = col_miss[col_miss <= 0.95].index.tolist()  # keep cols with <=95% missing
+            X_raw_df = X_raw_df[keep_cols]
+
+            # Impute remaining NaNs (median per feature) -> still "raw" scale
+            imp = SimpleImputer(strategy="median")
+            X_raw_imp = imp.fit_transform(X_raw_df.values)
+
+            if X_raw_imp.shape[0] < 3 or X_raw_imp.shape[1] < 2:
+                st.warning("Not enough data for raw PCA (need >=3 samples and >=2 features).")
             else:
-                if n_after < n_before:
-                    st.info(
-                        f"Raw PCA: dropped {n_before - n_after} samples due to missing values "
-                        "(no imputation in this view)."
-                    )
-
-                # PCA with no scaling/normalization
                 n_comp = st.slider(
                     "Raw PCA components",
                     min_value=2,
-                    max_value=min(10, X_raw_df.shape[1]),
-                    value=min(3, X_raw_df.shape[1]),
+                    max_value=min(10, X_raw_imp.shape[1]),
+                    value=min(3, X_raw_imp.shape[1]),
                     key="import_raw_pca_ncomp",
                 )
 
                 pca_raw = PCA(n_components=n_comp, random_state=0)
-                scores = pca_raw.fit_transform(X_raw_df.values)
+                scores = pca_raw.fit_transform(X_raw_imp)
 
                 scores_df = pd.DataFrame(scores, columns=[f"PC{i+1}" for i in range(n_comp)])
-                scores_df["sample_index"] = np.arange(scores_df.shape[0])
 
-                # add sample id + metadata (if available)
+                # add sample id + metadata
                 if APP.id_col and APP.id_col in df.columns:
-                    scores_df[APP.id_col] = df.loc[X_raw_df.index, APP.id_col].astype(str).values
+                    scores_df[APP.id_col] = df[APP.id_col].astype(str).values
                 if APP.color_col and APP.color_col in df.columns:
-                    scores_df[APP.color_col] = df.loc[X_raw_df.index, APP.color_col].astype(str).values
+                    scores_df[APP.color_col] = df[APP.color_col].astype(str).values
                 if APP.y_col and APP.y_col in df.columns and APP.y_col not in scores_df.columns:
-                    scores_df[APP.y_col] = df.loc[X_raw_df.index, APP.y_col].astype(str).values
+                    scores_df[APP.y_col] = df[APP.y_col].astype(str).values
 
                 color_by = APP.color_col if (APP.color_col and APP.color_col in scores_df.columns) else None
                 hover_cols = [c for c in scores_df.columns if not c.startswith("PC")]
 
-                c1, c2 = st.columns([2, 1])
+                pcx = st.selectbox("X axis", [f"PC{i+1}" for i in range(n_comp)], index=0, key="import_raw_pca_x")
+                pcy = st.selectbox("Y axis", [f"PC{i+1}" for i in range(n_comp)], index=1, key="import_raw_pca_y")
 
-                with c1:
-                    pcx = st.selectbox(
-                        "X axis",
-                        [f"PC{i+1}" for i in range(n_comp)],
-                        index=0,
-                        key="import_raw_pca_x",
-                    )
-                    pcy = st.selectbox(
-                        "Y axis",
-                        [f"PC{i+1}" for i in range(n_comp)],
-                        index=1,
-                        key="import_raw_pca_y",
-                    )
+                fig_raw_scores = px.scatter(
+                    scores_df,
+                    x=pcx,
+                    y=pcy,
+                    color=color_by,
+                    hover_data=hover_cols,
+                    title=f"RAW PCA Scores (median-imputed only): {pcx} vs {pcy}",
+                )
+                fig_raw_scores.update_layout(dragmode="zoom")
+                st.plotly_chart(fig_raw_scores, use_container_width=True, config={"displaylogo": False})
 
-                    fig_raw_scores = px.scatter(
-                        scores_df,
-                        x=pcx,
-                        y=pcy,
-                        color=color_by,
-                        hover_data=hover_cols,
-                        title=f"RAW PCA Scores (no scaling): {pcx} vs {pcy}",
-                    )
-                    fig_raw_scores.update_layout(dragmode="zoom")
-                    st.plotly_chart(fig_raw_scores, use_container_width=True, config={"displaylogo": False})
-
-                    key = "import_raw_pca_scores"
-                    store_fig(key, fig_raw_scores)
-                    add_download_html_button(fig_raw_scores, "Download HTML: raw PCA scores", key)
-
-                with c2:
-                    evr = pca_raw.explained_variance_ratio_ * 100.0
-                    evr_df = pd.DataFrame(
-                        {"PC": [f"PC{i+1}" for i in range(n_comp)], "Explained_%": evr}
-                    )
-
-                    fig_raw_evr = px.bar(
-                        evr_df,
-                        x="PC",
-                        y="Explained_%",
-                        title="RAW PCA explained variance (%)",
-                    )
-                    st.plotly_chart(fig_raw_evr, use_container_width=True, config={"displaylogo": False})
-
-                    key = "import_raw_pca_explained_variance"
-                    store_fig(key, fig_raw_evr)
-                    add_download_html_button(fig_raw_evr, "Download HTML: raw PCA explained variance", key)
+                evr = pca_raw.explained_variance_ratio_ * 100.0
+                evr_df = pd.DataFrame({"PC": [f"PC{i+1}" for i in range(n_comp)], "Explained_%": evr})
+                fig_raw_evr = px.bar(evr_df, x="PC", y="Explained_%", title="RAW PCA explained variance (%)")
+                st.plotly_chart(fig_raw_evr, use_container_width=True, config={"displaylogo": False})
 
         else:
             st.info("Select numeric feature columns (X) in the sidebar to run a raw PCA.")
-
 
 # -------------------------
 # 2) Preprocessing
@@ -717,7 +752,7 @@ with tabs[1]:
                     "Normalization by a reference sample (PQN)",
                     "Normalization by a pooled sample from group (group PQN)",
                     "Normalization by reference feature",
-                    "Quantile normalization (suggested only for > 1000 features)",
+                    "Quantile normalization",
                 ],
                 index=0,
             )
@@ -728,8 +763,8 @@ with tabs[1]:
                     "None",
                     "Log transformation (base 10)",
                     "Log transformation (base 2)",
-                    "Square root transformation (square root of data values)",
-                    "Cube root transformation (cube root of data values)",
+                    "Square root transformation",
+                    "Cube root transformation",
                     "Variance stabilizing normalization (VSN)",
                 ],
                 index=0,
@@ -826,98 +861,135 @@ with tabs[1]:
         # ---------------------------------------
         # Apply preprocessing in a transparent order
         # ---------------------------------------
+        if "preprocess_ran" not in st.session_state:
+            st.session_state["preprocess_ran"] = False
 
-        # 0) Drop high-missing features (based on raw numeric)
-        miss_pct = X_df.isna().mean() * 100.0
-        keep_cols = miss_pct[miss_pct <= missing_col_thresh].index.tolist()
-        dropped_missing = [c for c in X_df.columns if c not in keep_cols]
-        X_df = X_df[keep_cols]
+        run = st.button("Run preprocessing", type="primary", key="run_preprocess")
+        already_done = (APP.X_proc is not None) and (APP.feature_names is not None)
 
-        # 1) Impute (feature-wise, using selected strategy)
-        X_imp = imp.fit_transform(X_df.values)
-        X_imp_df = pd.DataFrame(X_imp, index=X_df.index, columns=X_df.columns)
+        if run:
+            st.session_state["preprocess_ran"] = True
 
-        # 2) Sample normalization (row-wise)
-        sample_factor = df_full[factor_col] if factor_col else None
+        # Stop only if we have NOTHING yet and the user didn't click Run
+        if (not run) and (not already_done):
+            st.info("Adjust settings, then click **Run preprocessing**.")
+            st.stop()
 
-        ref_sample_series = None
-        if sample_norm == "Normalization by a reference sample (PQN)" and ref_sample_id is not None:
-            idx = df_full[APP.id_col].astype(str) == str(ref_sample_id)
-            if idx.sum() != 1:
-                st.error("Could not uniquely identify the reference sample for PQN.")
-                st.stop()
-            ref_sample_series = X_imp_df.loc[idx.values].iloc[0]
+        recompute = run
 
-        try:
-            X_norm_df = sample_normalize(
-                X_imp_df,
-                method=sample_norm,
-                sample_factor=sample_factor,
-                ref_sample=ref_sample_series,
-                ref_feature=ref_feature,
-                group_labels=group_labels,
+        if not recompute:
+            st.success(
+                f"Using stored preprocessing result: {APP.X_proc.shape[0]} samples × {APP.X_proc.shape[1]} features"
             )
-        except Exception as e:
-            st.error(f"Sample normalization failed: {e}")
-            st.stop()
-
-        # 3) Data transformation (elementwise)
-        try:
-            X_tr_df = transform_data(X_norm_df, method=transform)
-        except Exception as e:
-            st.error(f"Transformation failed: {e}")
-            st.stop()
-
-        # 4) Alignment / batch correction (optional)
-        try:
-            X_al_df = batch_align(X_tr_df, batch=batch_series, method=alignment)
-        except Exception as e:
-            st.error(f"Alignment failed: {e}")
-            st.stop()
-
-        # sanitize after norm/transform/alignment (log/division may create inf/NaN)
-        X_al_df = X_al_df.replace([np.inf, -np.inf], np.nan)
-
-        # final imputation to guarantee PCA/models never see NaN
-        final_imp = SimpleImputer(strategy="median")
-        X_al_df.loc[:, :] = final_imp.fit_transform(X_al_df.values)
-
-        # 5) Drop zero-variance (AFTER final imputation is safest)
-        if drop_zero_var:
-            vari = X_al_df.var(axis=0, skipna=True)
-            keep2 = vari[vari > 0].index.tolist()
-            dropped_zero = [c for c in X_al_df.columns if c not in keep2]
-            X_al_df = X_al_df[keep2]
         else:
-            dropped_zero = []
+            # 0) Drop high-missing features (based on raw numeric)
+            miss_pct = X_df.isna().mean() * 100.0
+            keep_cols = miss_pct[miss_pct <= missing_col_thresh].index.tolist()
+            dropped_missing = [c for c in X_df.columns if c not in keep_cols]
+            X_df2 = X_df[keep_cols].copy()
 
-        # 6) Scaling (feature-wise)
-        if scaler is not None:
-            X_proc = scaler.fit_transform(X_al_df.values)
-        else:
-            X_proc = X_al_df.values
+            # 1) Impute (feature-wise, using selected strategy)
+            X_imp = imp.fit_transform(X_df2.values)
+            X_imp_df = pd.DataFrame(X_imp, index=X_df2.index, columns=X_df2.columns)
 
-        # Store to app state
-        APP.X_proc = np.asarray(X_proc, dtype=float)
-        APP.feature_names = X_al_df.columns.tolist()
+            # 2) Sample normalization (row-wise)
+            sample_factor = df_full[factor_col] if factor_col else None
 
-        st.success(f"Processed X: {APP.X_proc.shape[0]} samples × {APP.X_proc.shape[1]} features")
-        if dropped_missing:
-            st.warning(f"Dropped (missingness): {len(dropped_missing)} features")
-        if dropped_zero:
-            st.warning(f"Dropped (zero variance): {len(dropped_zero)} features")
+            ref_sample_series = None
+            if sample_norm == "Normalization by a reference sample (PQN)" and ref_sample_id is not None:
+                idx = df_full[APP.id_col].astype(str) == str(ref_sample_id)
+                if idx.sum() != 1:
+                    st.error("Could not uniquely identify the reference sample for PQN.")
+                    st.stop()
+                ref_sample_series = X_imp_df.loc[idx].iloc[0]
+
+            try:
+                X_norm_df = sample_normalize(
+                    X_imp_df,
+                    method=sample_norm,
+                    sample_factor=sample_factor,
+                    ref_sample=ref_sample_series,
+                    ref_feature=ref_feature,
+                    group_labels=group_labels,
+                )
+            except Exception as e:
+                st.error(f"Sample normalization failed: {e}")
+                st.stop()
+
+            # 3) Data transformation (elementwise)
+            try:
+                X_tr_df = transform_data(X_norm_df, method=transform)
+            except Exception as e:
+                st.error(f"Transformation failed: {e}")
+                st.stop()
+
+            # 4) Alignment / batch correction (optional)
+            try:
+                X_al_df = batch_align(X_tr_df, batch=batch_series, method=alignment)
+            except Exception as e:
+                st.error(f"Alignment failed: {e}")
+                st.stop()
+
+            # sanitize after norm/transform/alignment (log/division may create inf/NaN)
+            X_al_df = X_al_df.replace([np.inf, -np.inf], np.nan)
+
+            # final imputation to guarantee PCA/models never see NaN
+            final_imp = SimpleImputer(strategy="median")
+            X_al_df = pd.DataFrame(
+                final_imp.fit_transform(X_al_df),
+                index=X_al_df.index,
+                columns=X_al_df.columns,
+            )
+
+            # 5) Drop zero-variance (AFTER final imputation is safest)
+            if drop_zero_var:
+                vari = X_al_df.var(axis=0, skipna=True)
+                keep2 = vari[vari > 0].index.tolist()
+                dropped_zero = [c for c in X_al_df.columns if c not in keep2]
+                X_al_df = X_al_df[keep2]
+            else:
+                dropped_zero = []
+
+            # ✅ STORE pre-scale (no scaling yet)
+            APP.X_pre_scale = X_al_df.copy()
+
+            # 6) Scaling (feature-wise)
+            if scaler is not None:
+                X_proc = scaler.fit_transform(X_al_df.values)
+            else:
+                X_proc = X_al_df.values
+
+            # Store to app state
+            APP.X_proc = np.asarray(X_proc, dtype=float)
+            APP.feature_names = X_al_df.columns.tolist()
+
+            st.success(f"Processed X: {APP.X_proc.shape[0]} samples × {APP.X_proc.shape[1]} features")
+            if dropped_missing:
+                st.warning(f"Dropped (missingness): {len(dropped_missing)} features")
+            if dropped_zero:
+                st.warning(f"Dropped (zero variance): {len(dropped_zero)} features")
 
         # ---------------------------------------
         # Visualization: before vs after
         # ---------------------------------------
         st.divider()
         st.subheader("Before vs After (visual checks)")
+        fast_mode = st.checkbox("Fast mode", value=True,
+                                help="Reduces plot complexity so the app stays responsive.")
+
+        MAX_SAMPLES_TRACES = 25 if fast_mode else 80
+        MAX_FEATURES_TRACES = 25 if fast_mode else 80
+        MAX_POINTS_PER_TRACE = 400 if fast_mode else 2000
         figs_local = {}
 
         # Matrices aligned to final feature list
         feat_labels = APP.feature_names
         raw_mat = _as_numeric_df(APP.X_raw.copy()).reindex(columns=feat_labels)
         proc_mat = pd.DataFrame(APP.X_proc, index=raw_mat.index, columns=feat_labels)
+
+        if APP.X_proc.shape[1] != len(feat_labels):
+            st.error("Internal mismatch: X_proc columns do not match feature_names. Please run preprocessing again.")
+            st.stop()
 
         # Sample labels
         if APP.id_col and APP.id_col in df_full.columns:
@@ -928,136 +1000,133 @@ with tabs[1]:
         # ======================================================
         # A) DISTRIBUTION FOR EVERY SAMPLE (across features)
         # ======================================================
-        with st.expander("Distributions: EVERY SAMPLE (across features) — raw vs processed", expanded=False):
+        with st.expander("Distributions: GROUP OVERLAY (across features) — raw vs processed", expanded=False):
             st.caption(
-                "Each violin is one sample. Values are all features within that sample. "
-                "This is the clearest view for sample-wise normalization effects."
+                "Fast view: for each group, we pool ALL values (samples×features) and overlay distributions by group. "
+                "Use this to visually check sample-wise normalization effects without plotting each sample."
             )
 
-            max_show = st.slider(
-                "How many samples to show (violin view)",
-                min_value=2,
-                max_value=min(200, raw_mat.shape[0]),
-                value=min(40, raw_mat.shape[0]),
-                help="Hundreds are possible but heavy; ~20–60 is ideal for teaching.",
-                key="dist_samples_n",
-            )
-            idx_show = list(range(min(max_show, raw_mat.shape[0])))
+            # --- need a group label column ---
+            if not (APP.y_col and APP.y_col in df_full.columns):
+                st.warning("No group column available (APP.y_col). Add/keep a class column (e.g., ATTRIBUTE_class).")
+            else:
+                group_series = df_full[APP.y_col].astype(str)
 
-            # ---- Violin (each sample) ----
-            fig = go.Figure()
-            for i in idx_show:
-                vals = raw_mat.iloc[i].values
-                vals = vals[np.isfinite(vals)]
-                fig.add_trace(
-                    go.Violin(
-                        y=vals,
-                        name=f"{sample_names_all[i]} (raw)",
-                        side="negative",
-                        width=0.9,
-                        points=False,
-                        showlegend=False,
-                        meanline_visible=True,
-                    )
-                )
-            for i in idx_show:
-                vals = proc_mat.iloc[i].values
-                vals = vals[np.isfinite(vals)]
-                fig.add_trace(
-                    go.Violin(
-                        y=vals,
-                        name=f"{sample_names_all[i]} (processed)",
-                        side="positive",
-                        width=0.9,
-                        points=False,
-                        showlegend=False,
-                        meanline_visible=True,
-                    )
-                )
+                # optional: limit features for speed (but still not per-feature plotting)
+                n_feats = int(len(feat_labels))
+                if n_feats < 2:
+                    st.warning("Not enough features to plot pooled distributions.")
+                else:
+                    min_feat = 2
+                    max_feat_allowed = min(5000, n_feats)
+                    default_feat = min(800, max_feat_allowed)
 
-            fig.update_layout(
-                title="Every sample distribution (across features): RAW (left) vs PROCESSED (right)",
-                yaxis_title="Feature intensity (within-sample distribution)",
-                xaxis_title="Samples (stacked violins)",
-                violingap=0.02,
-                violinmode="overlay",
-                height=650,
-                dragmode="zoom",
-            )
-            st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
-            key = "preprocess_dist_every_sample_violin"
-            store_fig(key, fig)
-            add_download_html_button(fig, "Download HTML: distributions per sample (violin)", key)
-            figs_local[key] = fig
+                    if min_feat == max_feat_allowed:
+                        max_feat = max_feat_allowed
+                        st.caption(f"Max features used: {max_feat} (only option)")
+                    else:
+                        step_feat = 20 if (max_feat_allowed - min_feat) >= 20 else 1
+                        max_feat = st.slider(
+                            "Max features used for pooled distributions (speed control)",
+                            min_value=min_feat,
+                            max_value=max_feat_allowed,
+                            value=default_feat,
+                            step=step_feat,
+                            help="This only limits how many feature columns are pooled. No individual feature plots.",
+                            key="group_overlay_maxfeat",
+                        )
+                    feat_use = feat_labels[:max_feat]
 
-            # ---- RESULT distributions (global + sample-summary) ----
-            st.divider()
-            st.subheader("Resulting distributions (EVERY SAMPLE)")
+                    # optional: sample cap for speed (again, pooled)
+                    n_samples = int(raw_mat.shape[0])
+                    if n_samples < 2:
+                        st.warning("Not enough samples to plot pooled distributions.")
+                    else:
+                        min_samp = 2
+                        max_samp_allowed = n_samples
+                        default_samp = min(300, max_samp_allowed)
 
-            # 1) GLOBAL distribution of all values (flattened)
-            raw_vals = raw_mat.iloc[idx_show].to_numpy().ravel()
-            proc_vals = proc_mat.iloc[idx_show].to_numpy().ravel()
-            raw_vals = raw_vals[np.isfinite(raw_vals)]
-            proc_vals = proc_vals[np.isfinite(proc_vals)]
+                        if min_samp == max_samp_allowed:
+                            max_samp = max_samp_allowed
+                            st.caption(f"Max samples used: {max_samp} (only option)")
+                        else:
+                            step_samp = 10 if (max_samp_allowed - min_samp) >= 10 else 1
+                            max_samp = st.slider(
+                                "Max samples used (speed control)",
+                                min_value=min_samp,
+                                max_value=max_samp_allowed,
+                                value=default_samp,
+                                step=step_samp,
+                                key="group_overlay_maxsamp",
+                            )
 
-            df_global = pd.DataFrame(
-                {
-                    "value": np.concatenate([raw_vals, proc_vals]),
-                    "stage": (["raw"] * len(raw_vals)) + (["processed"] * len(proc_vals)),
-                }
-            )
+                        idx_use = list(range(min(max_samp, n_samples)))
 
-            fig_global = px.histogram(
-                df_global,
-                x="value",
-                color="stage",
-                barmode="overlay",
-                nbins=80,
-                title="GLOBAL distribution of all values (samples×features): RAW vs PROCESSED",
-            )
-            fig_global.update_layout(dragmode="zoom")
-            st.plotly_chart(fig_global, use_container_width=True, config={"displaylogo": False})
-            key = "preprocess_result_global_values_samples"
-            store_fig(key, fig_global)
-            add_download_html_button(fig_global, "Download HTML: global values (every sample)", key)
-            figs_local[key] = fig_global
+                        # aligned matrices (subset)
+                        raw_sub = raw_mat.iloc[idx_use][feat_use]
+                        proc_sub = proc_mat.iloc[idx_use][feat_use]
+                        grp_sub = group_series.iloc[idx_use]
 
-            # 2) Distribution across samples of sample-wise summaries
-            def _sample_stats(mat: pd.DataFrame) -> pd.DataFrame:
-                arr = mat.to_numpy()
-                return pd.DataFrame(
-                    {
-                        "mean": np.nanmean(arr, axis=1),
-                        "median": np.nanmedian(arr, axis=1),
-                        "sum": np.nansum(arr, axis=1),
-                        "std": np.nanstd(arr, axis=1),
-                    }
-                )
+                        # ---------- build long dataframe (pooled values) ----------
+                        raw_long = pd.DataFrame(
+                            {
+                                "value": raw_sub.to_numpy().ravel(),
+                                "group": np.repeat(grp_sub.values, len(feat_use)),
+                                "stage": "raw",
+                            }
+                        )
+                        proc_long = pd.DataFrame(
+                            {
+                                "value": proc_sub.to_numpy().ravel(),
+                                "group": np.repeat(grp_sub.values, len(feat_use)),
+                                "stage": "processed",
+                            }
+                        )
 
-            s_raw = _sample_stats(raw_mat.iloc[idx_show])
-            s_raw["stage"] = "raw"
-            s_proc = _sample_stats(proc_mat.iloc[idx_show])
-            s_proc["stage"] = "processed"
+                        df_long = pd.concat([raw_long, proc_long], ignore_index=True)
+                        df_long = df_long[np.isfinite(df_long["value"].values)]
 
-            df_stats = pd.concat([s_raw, s_proc], ignore_index=True).melt(
-                id_vars=["stage"], var_name="stat", value_name="value"
-            )
+                        # ---------- choose plot type ----------
+                        plot_kind = st.radio(
+                            "Plot type",
+                            ["Histogram (fastest)", "Violin (still fast)"],
+                            horizontal=True,
+                            key="group_overlay_plotkind",
+                        )
 
-            fig_stats = px.violin(
-                df_stats,
-                x="stat",
-                y="value",
-                color="stage",
-                box=True,
-                points=False,
-                title="Sample-wise summaries (distribution across samples): RAW vs PROCESSED",
-            )
-            fig_stats.update_layout(dragmode="zoom")
-            st.plotly_chart(fig_stats, use_container_width=True, config={"displaylogo": False})
-            key = "preprocess_result_sample_summaries"
-            store_fig(key, fig_stats)
-            add_download_html_button(fig_stats, "Download HTML: sample summaries", key)
-            figs_local[key] = fig_stats
+                        if plot_kind.startswith("Histogram"):
+                            nbins = st.slider("Bins", 20, 200, 80, key="group_overlay_bins")
+
+                            fig = px.histogram(
+                                df_long,
+                                x="value",
+                                color="group",
+                                facet_col="stage",
+                                barmode="overlay",
+                                nbins=nbins,
+                                histnorm="probability density",
+                                title="GROUP overlay distribution (pooled samples×features): RAW vs PROCESSED",
+                            )
+                            fig.update_layout(dragmode="zoom", height=520)
+                            fig.update_traces(opacity=0.45)
+                        else:
+                            fig = px.violin(
+                                df_long,
+                                x="group",
+                                y="value",
+                                color="group",
+                                facet_col="stage",
+                                box=True,
+                                points=False,
+                                title="GROUP overlay distribution (pooled samples×features): RAW vs PROCESSED",
+                            )
+                            fig.update_layout(dragmode="zoom", height=520)
+
+                        st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
+                        key = "preprocess_group_overlay_raw_vs_processed"
+                        store_fig(key, fig)
+                        add_download_html_button(fig, "Download HTML: group overlay (raw vs processed)", key)
+                        figs_local[key] = fig
 
         # ======================================================
         # B) DISTRIBUTION FOR EVERY FEATURE (across samples)
@@ -1111,7 +1180,11 @@ with tabs[1]:
 
             # PRE-SCALE: X_al_df is your "final non-scaled" dataframe (right before scaler.fit_transform)
             # Ensure it exists in this scope: it is created above in your preprocessing flow.
-            pre_scale_mat = X_al_df.reindex(columns=feat_labels)  # already imputed + cleaned earlier
+            if APP.X_pre_scale is None:
+                st.warning("Pre-scale matrix not found. Click 'Run preprocessing' again.")
+                st.stop()
+
+            pre_scale_mat = APP.X_pre_scale.reindex(index=raw_mat.index)
             pre_scale_mat = pre_scale_mat.replace([np.inf, -np.inf], np.nan)
 
             # PROCESSED (scaled if selected, else equals pre-scale numerically)
@@ -1212,6 +1285,7 @@ with tabs[1]:
                 color="stage",
                 barmode="overlay",
                 nbins=80,
+                histnorm="probability density",
                 title="GLOBAL distribution of all values (samples×features): RAW vs PRE-SCALE vs PROCESSED",
             )
             fig_global.update_layout(dragmode="zoom")
@@ -1255,54 +1329,70 @@ with tabs[1]:
             figs_local[key] = fig_stats
 
         # ======================================================
-        # C) Per-feature selected histograms
+        # C) Per-feature selected histograms (RAW vs PRE-SCALE vs PROCESSED)
         # ======================================================
-        st.subheader("Before vs After: selected feature distributions (histograms)")
-        import random
+        st.subheader("Selected feature distributions (histograms)")
+
         feat_pick = st.multiselect(
             "Pick features to compare",
             APP.feature_names,
-            default=APP.feature_names[: min(0, len(APP.feature_names))],
+            default=APP.feature_names[: min(3, len(APP.feature_names))],
             key="preprocess_hist_pick",
         )
 
         for f in feat_pick:
-            before = pd.to_numeric(APP.X_raw[f], errors="coerce")
-            j = APP.feature_names.index(f)
-            after = pd.Series(APP.X_proc[:, j], name=f)
+            # raw (may have NaN)
+            raw_vals = pd.to_numeric(raw_mat[f], errors="coerce").values
+            raw_vals = raw_vals[np.isfinite(raw_vals)]
 
-            df_long = pd.DataFrame(
-                {
-                    "value": pd.concat(
-                        [before.reset_index(drop=True), after.reset_index(drop=True)],
-                        ignore_index=True,
-                    ),
-                    "stage": ["raw"] * len(before) + ["processed"] * len(after),
-                }
-            )
+            # pre-scale (no scaling; already cleaned/imputed)
+            pre_vals = pd.to_numeric(pre_scale_mat[f], errors="coerce").values
+            pre_vals = pre_vals[np.isfinite(pre_vals)]
 
-            fig = px.histogram(
-                df_long,
-                x="value",
-                color="stage",
+            # processed (final)
+            proc_vals = pd.to_numeric(proc_mat[f], errors="coerce").values
+            proc_vals = proc_vals[np.isfinite(proc_vals)]
+
+            if len(raw_vals) < 2 or len(proc_vals) < 2:
+                st.warning(f"Not enough data for feature: {f}")
+                continue
+
+            # shared binning/range so RAW doesn't disappear
+            all_vals = np.concatenate([raw_vals, pre_vals, proc_vals]) if len(pre_vals) else np.concatenate([raw_vals, proc_vals])
+            xmin, xmax = float(np.min(all_vals)), float(np.max(all_vals))
+            nbins = 50
+
+            fig = go.Figure()
+            fig.add_trace(go.Histogram(
+                x=raw_vals, name="raw", opacity=0.45,
+                nbinsx=nbins, histnorm="probability density",
+                xbins=dict(start=xmin, end=xmax),
+            ))
+            fig.add_trace(go.Histogram(
+                x=pre_vals, name="pre-scale", opacity=0.45,
+                nbinsx=nbins, histnorm="probability density",
+                xbins=dict(start=xmin, end=xmax),
+            ))
+            fig.add_trace(go.Histogram(
+                x=proc_vals, name="processed", opacity=0.45,
+                nbinsx=nbins, histnorm="probability density",
+                xbins=dict(start=xmin, end=xmax),
+            ))
+
+            fig.update_layout(
                 barmode="overlay",
-                nbins=40,
-                title=f"Raw vs Processed: {f}",
+                title=f"{f}: RAW vs PRE-SCALE vs PROCESSED",
+                xaxis_title="Value",
+                yaxis_title="Density",
+                dragmode="zoom",
+                height=420,
             )
+
             st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
             key = f"preprocess_hist_{f}"
             store_fig(key, fig)
             add_download_html_button(fig, f"Download HTML: {f}", key)
             figs_local[key] = fig
-
-        if figs_local:
-            st.download_button(
-                "Download ALL Preprocessing plots (ZIP of HTML)",
-                data=zip_html(figs_local),
-                file_name="preprocessing_plots_html.zip",
-                mime="application/zip",
-                use_container_width=True,
-            )
 
 
 # -------------------------
@@ -1315,7 +1405,13 @@ with tabs[2]:
         st.info("Run preprocessing first (tab 2).")
     else:
         X = APP.X_proc
-        n_comp = st.slider("PCA components", 2, min(10, X.shape[1]), 3)
+        max_pca = min(10, X.shape[1])
+
+        if max_pca < 2:
+            st.warning(f"Not enough features for PCA (need >=2). You currently have {X.shape[1]}.")
+            st.stop()
+        else:
+            n_comp = st.slider("PCA components", 2, max_pca, min(3, max_pca))
 
         pca = PCA(n_components=n_comp, random_state=0)
         scores = pca.fit_transform(X)
@@ -1367,8 +1463,16 @@ with tabs[2]:
         st.subheader("Correlation heatmap (processed X)")
         # Correlation on a subset if too many features
         max_features = st.slider("Max features for correlation heatmap", 10, 200, 60)
-        feats = APP.feature_names[: min(max_features, len(APP.feature_names))]
-        X_sub = pd.DataFrame(X[:, : len(feats)], columns=feats)
+        rng = np.random.default_rng(0)
+        feats_all = list(APP.feature_names)
+        if len(feats_all) > max_features:
+            feats = list(rng.choice(feats_all, size=max_features, replace=False))
+        else:
+            feats = feats_all
+
+        # Build a proper DataFrame with all feature columns, then subset by name
+        X_df = pd.DataFrame(X, columns=feats_all)
+        X_sub = X_df[feats]
         corr = X_sub.corr()
 
         fig_corr = px.imshow(
@@ -1509,14 +1613,19 @@ with tabs[3]:
             Y = pd.get_dummies(y_cat).values  # (n_samples x n_classes)
 
             max_comp = min(10, X.shape[1], X.shape[0] - 1)
-            n_comp = st.slider(
-                "PLS-DA components",
-                min_value=2,
-                max_value=max(2, max_comp),
-                value=min(2, max_comp),
-                key="plsda_ncomp",
-                help="Limited by n_samples and n_features.",
-            )
+            if max_comp < 2:
+                st.warning(f"PLS-DA needs at least 2 components possible, but max_comp={max_comp}. "
+                           f"(Check if you have too few samples/features after preprocessing.)")
+                st.stop()  # <-- THIS st.stop IS OK HERE (top-level tab), not inside an expander
+            else:
+                n_comp = st.slider(
+                    "PLS-DA components",
+                    min_value=2,
+                    max_value=max_comp,
+                    value=2,
+                    key="plsda_ncomp",
+                    help="Limited by n_samples and n_features.",
+                )
 
             # Fit PLS
             from sklearn.cross_decomposition import PLSRegression
@@ -1730,104 +1839,163 @@ with tabs[4]:
     elif APP.y_raw is None:
         st.warning("No target y selected.")
     else:
-        y = APP.y_raw
-        mask = ~pd.isna(y)
+        # -------------------------
+        # Data
+        # -------------------------
+        y_ser = APP.y_raw
+        mask = ~pd.isna(y_ser)
         X = APP.X_proc[mask.values, :]
-        y = y[mask].astype(str).values
+        y = y_ser[mask].astype(str).values
 
-        # Choose CV strategy
+        # Stable class order
+        classes = np.array(sorted(pd.unique(y).tolist()))
+
+        # Folds allowed by smallest class
+        class_counts = pd.Series(y).value_counts()
+        min_class_n = int(class_counts.min()) if len(class_counts) else 0
+        if min_class_n < 2:
+            st.error(f"Not enough samples per class for CV. Counts: {class_counts.to_dict()}")
+            st.stop()
+
+        max_allowed_folds = min(10, min_class_n)
+        st.caption(f"Class counts: {class_counts.to_dict()} | max folds allowed: {max_allowed_folds}")
+
+        # -------------------------
+        # CV controls
+        # -------------------------
         st.subheader("Cross-validation")
-        # --- CHANGED: folds slider max depends on data ---
+
         cv_folds = st.slider(
             "Folds",
             min_value=2,
             max_value=max_allowed_folds,
             value=min(5, max_allowed_folds),
             key="val_folds",
-            help=f"Max allowed folds for your data: {max_allowed_folds} (min class size = {min_class_n})"
+            help=f"Max allowed folds: {max_allowed_folds} (min class size = {min_class_n})",
         )
-        n_repeats = st.slider("Repeats", 1, 20, 3)
-        seed = st.number_input("Random seed", value=0, step=1)
+        n_repeats = st.slider("Repeats", 1, 20, 3, key="val_repeats")
+        seed = st.number_input("Random seed", value=0, step=1, key="val_seed")
 
-        # Model
+        # Model controls
         C = st.slider("C (LogReg)", 0.01, 10.0, 1.0, key="val_C")
         max_iter = st.slider("max_iter", 100, 5000, 1000, step=100, key="val_max_iter")
         model = LogisticRegression(C=C, max_iter=max_iter, solver="lbfgs", multi_class="auto")
 
+        # -------------------------
         # Repeated CV predictions
-        preds_all = []
-        probs_all = []
-        y_all = []
-        fold_id = []
+        # -------------------------
+        y_true_all: List[np.ndarray] = []
+        y_pred_all: List[np.ndarray] = []
+        y_proba_all: List[np.ndarray] = []
 
-        classes = np.unique(y)
+        for r in range(int(n_repeats)):
+            cv = StratifiedKFold(
+                n_splits=int(cv_folds),
+                shuffle=True,
+                random_state=int(seed) + r,
+            )
 
-        for r in range(n_repeats):
-            # --- CHANGED: safety clamp ---
-            effective_folds = min(cv_folds, max_allowed_folds)
-            cv = StratifiedKFold(n_splits=effective_folds, shuffle=True, random_state=int(seed) + r)
-            # Predict labels
             y_pred = cross_val_predict(model, X, y, cv=cv, method="predict")
-            preds_all.append(y_pred)
-            y_all.append(y)
+            y_true_all.append(y)
+            y_pred_all.append(y_pred)
 
-            # Predict probabilities (for ROC AUC where possible)
+            # Probabilities only when available
             try:
                 y_proba = cross_val_predict(model, X, y, cv=cv, method="predict_proba")
-                probs_all.append(y_proba)
+                y_proba_all.append(y_proba)
             except Exception:
-                probs_all.append(None)
+                pass
 
-        y_pred = np.concatenate(preds_all)
-        y_true = np.concatenate(y_all)
+        y_true = np.concatenate(y_true_all)
+        y_pred = np.concatenate(y_pred_all)
 
         acc = accuracy_score(y_true, y_pred)
         bacc = balanced_accuracy_score(y_true, y_pred)
-
         st.write(f"Accuracy: **{acc:.3f}**")
         st.write(f"Balanced accuracy: **{bacc:.3f}**")
 
+        # -------------------------
+        # Confusion matrix
+        # -------------------------
         st.divider()
         st.subheader("Confusion matrix")
+
         cm = confusion_matrix(y_true, y_pred, labels=classes)
-        cm_df = pd.DataFrame(cm, index=[f"true:{c}" for c in classes], columns=[f"pred:{c}" for c in classes])
-        fig_cm = px.imshow(cm_df, text_auto=True, aspect="auto", title="Confusion Matrix (repeated CV predictions)")
+        cm_df = pd.DataFrame(
+            cm,
+            index=[f"true:{c}" for c in classes],
+            columns=[f"pred:{c}" for c in classes],
+        )
+        fig_cm = px.imshow(cm_df, text_auto=True, aspect="auto", title="Confusion Matrix (repeated CV)")
         st.plotly_chart(fig_cm, use_container_width=True, config={"displaylogo": False})
         store_fig("validation_confusion_matrix", fig_cm)
         add_download_html_button(fig_cm, "Download HTML: confusion matrix", "validation_confusion_matrix")
 
+        # -------------------------
+        # ROC (binary only)
+        # -------------------------
         st.divider()
         st.subheader("ROC (binary only)")
+
         figs_local = {"validation_confusion_matrix": fig_cm}
-        if len(classes) == 2 and probs_all and probs_all[0] is not None:
-            # average over repeats by concatenation
-            proba = np.vstack([p for p in probs_all if p is not None])
-            # proba order corresponds to model.classes_ but cross_val_predict preserves it per fold.
-            # We'll assume consistent ordering; use class index of positive label chosen by user.
-            pos_label = st.selectbox("Positive class", list(classes), index=1)
-            pos_idx = list(classes).index(pos_label)
 
-            y_bin = (y_true == pos_label).astype(int)
-            y_score = proba[:, pos_idx]
+        if len(classes) == 2 and len(y_proba_all) > 0:
+            # Stack probabilities from the repeats that actually produced them
+            proba = np.vstack(y_proba_all)
 
-            auc = roc_auc_score(y_bin, y_score)
-            fpr, tpr, _ = roc_curve(y_bin, y_score)
+            # y order from cross_val_predict is aligned to the input y each time
+            y_true_for_proba = np.tile(y, len(y_proba_all))
 
-            fig_roc = go.Figure()
-            fig_roc.add_trace(go.Scatter(x=fpr, y=tpr, mode="lines", name=f"ROC (AUC={auc:.3f})"))
-            fig_roc.add_trace(go.Scatter(x=[0, 1], y=[0, 1], mode="lines", name="Chance", line=dict(dash="dash")))
-            fig_roc.update_layout(
-                title="ROC Curve (Repeated CV)",
-                xaxis_title="False Positive Rate",
-                yaxis_title="True Positive Rate",
-            )
-            st.plotly_chart(fig_roc, use_container_width=True, config={"displaylogo": False})
-            store_fig("validation_roc", fig_roc)
-            add_download_html_button(fig_roc, "Download HTML: ROC curve", "validation_roc")
-            figs_local["validation_roc"] = fig_roc
+            # Sanity check: rows must match
+            if proba.shape[0] != y_true_for_proba.shape[0]:
+                st.warning("ROC skipped: probability rows do not match y_true length.")
+            else:
+                # IMPORTANT: get the true probability-column order from the estimator
+                model_tmp = LogisticRegression(C=C, max_iter=max_iter, solver="lbfgs", multi_class="auto")
+                model_tmp.fit(X, y)
+                proba_classes = model_tmp.classes_  # column order used by predict_proba
+
+                # Guard: ensure proba columns match the estimator's class order
+                if proba.shape[1] != len(proba_classes):
+                    st.warning("ROC skipped: probability output shape does not match class list.")
+                else:
+                    pos_label = st.selectbox(
+                        "Positive class",
+                        options=list(proba_classes),
+                        index=1,
+                        key="val_pos_label",
+                    )
+                    pos_idx = int(np.where(proba_classes == pos_label)[0][0])
+
+                    y_bin = (y_true_for_proba == pos_label).astype(int)
+                    y_score = proba[:, pos_idx]
+
+                    auc = roc_auc_score(y_bin, y_score)
+                    fpr, tpr, _ = roc_curve(y_bin, y_score)
+
+                    fig_roc = go.Figure()
+                    fig_roc.add_trace(go.Scatter(x=fpr, y=tpr, mode="lines", name=f"ROC (AUC={auc:.3f})"))
+                    fig_roc.add_trace(
+                        go.Scatter(x=[0, 1], y=[0, 1], mode="lines", name="Chance", line=dict(dash="dash"))
+                    )
+                    fig_roc.update_layout(
+                        title="ROC Curve (Repeated CV)",
+                        xaxis_title="False Positive Rate",
+                        yaxis_title="True Positive Rate",
+                        dragmode="zoom",
+                    )
+
+                    st.plotly_chart(fig_roc, use_container_width=True, config={"displaylogo": False})
+                    store_fig("validation_roc", fig_roc)
+                    add_download_html_button(fig_roc, "Download HTML: ROC curve", "validation_roc")
+                    figs_local["validation_roc"] = fig_roc
         else:
-            st.info("ROC curve is shown only for binary targets with probability predictions.")
+            st.info("ROC is shown only for binary targets with probability predictions.")
 
+
+        # -------------------------
+        # Download all
+        # -------------------------
         st.download_button(
             "Download ALL Validation plots (ZIP of HTML)",
             data=zip_html(figs_local),
@@ -1836,11 +2004,12 @@ with tabs[4]:
             use_container_width=True,
         )
 
+        # -------------------------
+        # Text report
+        # -------------------------
         st.divider()
         st.subheader("Classification report (text)")
         st.code(classification_report(y_true, y_pred), language="text")
-
-
 
 # -------------------------
 # 6) Interpretation
