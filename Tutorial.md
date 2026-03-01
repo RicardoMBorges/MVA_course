@@ -3,7 +3,7 @@
 > This document is designed as a conceptual and practical guide for students learning multivariate data analysis in metabolomics and related biological sciences.
 
 ---
-
+ 
 # 1️⃣ What Is Multivariate Data?
 
 ## Definition: Variable
