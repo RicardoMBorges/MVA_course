@@ -402,6 +402,8 @@ High variance = large dispersion.
 
 PCA captures directions of maximum variance.
 
+![PCA Score Plot](static/PCA_1.png)
+
 ---
 
 ## Scores and Loadings
@@ -413,7 +415,7 @@ Coordinates of samples in PC space.
 Represent:
 
 * Samples
-
+  
 ---
 
 ### Loading
@@ -424,6 +426,12 @@ Represent:
 
 * Variable contributions
 
+
+![PCA Score Plot](static/PCA_loadings.png)
+* 
+
+![PCA Score Plot](static/PCA_loadings2.png)
+*
 ---
 
 ## Orthogonality
@@ -458,6 +466,9 @@ A regression-based method adapted for classification.
 It finds components that:
 
 * Maximize covariance between X (data) and Y (class labels).
+
+![PCA Score Plot](static/PLSDA_1.png)
+*
 
 ---
 
