@@ -1,4 +1,6 @@
 
+![PCA Score Plot](static/MVA_course.png)
+
 # Block 1 — Mathematical Foundations (Matrix Notation) of PCA
 
 > This section formalizes the main operations used in multivariate analysis using matrix notation.
