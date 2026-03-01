@@ -217,6 +217,7 @@ It rotates the space.
 
 ![PCA Score Plot](static/PCA_Loadings1.png)
 
+![PCA Score Plot](static/PCA_Loadings2.png)
 
 ---
 
@@ -278,9 +279,9 @@ This ensures:
 
 Common distance measure:
 
-[
+$$
 d(x_i, x_j) = \sqrt{\sum_{k=1}^{p}(x_{ik} - x_{jk})^2}
-]
+$$
 
 This is Euclidean distance.
 
