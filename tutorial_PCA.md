@@ -1,5 +1,5 @@
 
-![PCA Score Plot](static/MVA_course.png)
+![PCA Score Plot](static/MVA_Course.png)
 
 # Block 1 — Mathematical Foundations (Matrix Notation) of PCA
 
