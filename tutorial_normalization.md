@@ -99,6 +99,7 @@ Without scaling:
 ## 🧪 Ideal “After” Autoscaling
 
 Autoscaling:
+
 $$
 x''*{ij} = \frac{x*{ij} - \bar{x}_j}{s_j}
 $$
@@ -160,7 +161,7 @@ Not:
 
 ---
 
-# 🚨 Important Teaching Point
+# 🚨 Important Point
 
 Normalization and scaling solve **orthogonal problems**.
 
