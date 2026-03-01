@@ -12,7 +12,7 @@ This app was designed for:
 
 ---
 
-# 🔬 Implemented Methods
+# Implemented Methods
 
 ## Unsupervised
 
@@ -68,7 +68,7 @@ Feature_3,0.55,0.60,0.90,0.88
 
 ---
 
-# 🚀 How to Use the App
+# How to Use the App
 
 The workflow is structured in 6 tabs:
 
@@ -168,9 +168,9 @@ Model assessment includes:
 
 Q² is calculated as:
 
-##
+$$
 Q^2 = 1 - \frac{PRESS}{TSS}
-##
+$$
 
 Where:
 
@@ -203,7 +203,7 @@ All visualizations are:
 
 ---
 
-# 📦 Installation (Local)
+# Installation (Local)
 
 Clone repository:
 
@@ -226,17 +226,7 @@ streamlit run app.py
 
 ---
 
-# 🌐 Deploy on Streamlit Cloud
-
-1. Push repository to GitHub
-2. Go to [https://streamlit.io/cloud](https://streamlit.io/cloud)
-3. Connect repository
-4. Select `app.py`
-5. Deploy
-
----
-
-# 🎓 Teaching Philosophy
+# Teaching Philosophy
 
 This app was built for structured learning:
 
@@ -249,7 +239,7 @@ Separation without validation is meaningless.
 
 ---
 
-# ⚠️ Important Notes
+# Important Notes
 
 * PLS-DA can overfit easily.
 * Always interpret Q² alongside R².
@@ -257,7 +247,7 @@ Separation without validation is meaningless.
 
 ---
 
-# 🧠 Recommended Extensions
+# Recommended Extensions
 
 Future upgrades could include:
 
@@ -269,7 +259,7 @@ Future upgrades could include:
 
 ---
 
-# 👨‍🔬 Author
+# Author
 
 [Ricardo M. Borges](https://orcid.org/0000-0002-7662-6734)
 Instituto de Pesquisas de Produtos Naturais Walter Mors(IPPN-UFRJ), Rio de Janeiro, Brazil.
