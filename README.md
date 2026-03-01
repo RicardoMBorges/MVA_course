@@ -168,9 +168,9 @@ Model assessment includes:
 
 Q² is calculated as:
 
-[
+##
 Q^2 = 1 - \frac{PRESS}{TSS}
-]
+##
 
 Where:
 
