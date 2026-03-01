@@ -1,5 +1,5 @@
 # Multivariate Data Analysis Course – Streamlit App
-
+ 
 An interactive web application for teaching and applying multivariate data analysis in metabolomics, analytical chemistry, and bioinformatics.
 
 This app was designed for:
