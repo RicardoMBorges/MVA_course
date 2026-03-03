@@ -182,7 +182,7 @@ PLS maximizes covariance between ( \mathbf{X} ) and ( \mathbf{Y} ).
 ---
 ---
 
-# 📐 Block 2 — Conceptual Geometry of Multivariate Analysis
+# Block 2 — Conceptual Geometry of Multivariate Analysis
 
 > Understanding geometry helps students truly grasp PCA and PLS-DA.
 
@@ -307,7 +307,7 @@ The hyperplane becomes too sensitive to noise.
 
 ---
 
-# 🚨 Block 3 — Common Misconceptions in Multivariate Analysis
+# Block 3 — Common Misconceptions in Multivariate Analysis
 
 > This section is critical for teaching.
 
@@ -409,7 +409,7 @@ Model complexity must be justified.
 
 ---
 
-# 🎓 Final Teaching Message
+# Final Message
 
 Multivariate analysis is:
 
