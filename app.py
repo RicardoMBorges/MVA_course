@@ -1220,6 +1220,9 @@ else:
 # STEP 3 — MODEL & VISUALIZE
 # ----------------------------------------------------------
 with tab3:
+    # ======================================================
+    # MIXTURE MODE (Scheffé Quadratic)
+    # ======================================================
     if design_mode == "Mixture Design (Solvent Optimization)":
         st.header("STEP 3 — Model & Visualize (Mixture — Scheffé Quadratic)")
 
@@ -1239,13 +1242,11 @@ with tab3:
             st.info("No 'Results' column yet. Compute Results in the sidebar first.")
             st.stop()
 
-        # --- enforce numeric & align columns
         df = df_state.copy()
 
         # keep only rows with finite Results + finite mixture fractions
         y = pd.to_numeric(df["Results"], errors="coerce").to_numpy(dtype=float)
         ok = np.isfinite(y)
-
         for c in mix_cols:
             v = pd.to_numeric(df[c], errors="coerce").to_numpy(dtype=float)
             ok = ok & np.isfinite(v)
@@ -1255,6 +1256,7 @@ with tab3:
             st.stop()
 
         df_fit = df.loc[ok, :].reset_index(drop=True)
+
         row_sum = df_fit[mix_cols].sum(axis=1)
         bad = (row_sum - 1.0).abs() > 1e-6
         if bad.any():
@@ -1274,7 +1276,10 @@ with tab3:
 
         st.subheader("Observed vs Predicted")
         ovp = pd.DataFrame({"Observed": df_fit["Results"].to_numpy(dtype=float), "Predicted": yhat})
-        fig_ovp = px.scatter(ovp, x="Observed", y="Predicted", trendline="ols", title="Observed vs Predicted (Mixture)")
+        fig_ovp = px.scatter(
+            ovp, x="Observed", y="Predicted", trendline="ols",
+            title="Observed vs Predicted (Mixture)"
+        )
         st.plotly_chart(fig_ovp, use_container_width=True)
         download_plotly_html(fig_ovp, "mixture_observed_vs_predicted.html", "Download as HTML")
 
@@ -1282,7 +1287,10 @@ with tab3:
         coef_df = pd.DataFrame({"Term": term_names, "Coefficient": coef})
         coef_df["Abs"] = coef_df["Coefficient"].abs()
         coef_df = coef_df.sort_values("Abs", ascending=False).reset_index(drop=True)
-        fig_coef = px.bar(coef_df.head(20), x="Term", y="Abs", title="Top coefficient magnitudes (|coef|) — Mixture")
+        fig_coef = px.bar(
+            coef_df.head(20), x="Term", y="Abs",
+            title="Top coefficient magnitudes (|coef|) — Mixture"
+        )
         st.plotly_chart(fig_coef, use_container_width=True)
         download_plotly_html(fig_coef, "mixture_coefficients_pareto.html", "Download as HTML")
 
@@ -1300,8 +1308,11 @@ with tab3:
         n = len(mix_cols)
 
         if n == 2:
-            fig = px.line(grid_df.sort_values(mix_cols[0]), x=mix_cols[0], y="Predicted",
-                          title="Predicted response across binary mixture")
+            fig = px.line(
+                grid_df.sort_values(mix_cols[0]),
+                x=mix_cols[0], y="Predicted",
+                title="Predicted response across binary mixture"
+            )
             st.plotly_chart(fig, use_container_width=True)
             download_plotly_html(fig, "mixture_predicted_binary.html", "Download as HTML")
 
@@ -1366,15 +1377,17 @@ with tab3:
             # draw triangle boundary
             A = (0.0, 0.0)
             B = (1.0, 0.0)
-            C = (0.5, math.sqrt(3)/2.0)
-            fig2d.add_trace(go.Scatter(
-                x=[A[0], B[0], C[0], A[0]],
-                y=[A[1], B[1], C[1], A[1]],
-                mode="lines",
-                line=dict(width=2),
-                hoverinfo="skip",
-                showlegend=False,
-            ))
+            C = (0.5, math.sqrt(3) / 2.0)
+            fig2d.add_trace(
+                go.Scatter(
+                    x=[A[0], B[0], C[0], A[0]],
+                    y=[A[1], B[1], C[1], A[1]],
+                    mode="lines",
+                    line=dict(width=2),
+                    hoverinfo="skip",
+                    showlegend=False,
+                )
+            )
 
             fig2d.update_layout(
                 title="Predicted response (ternary) — point-colored map",
@@ -1386,15 +1399,18 @@ with tab3:
             st.plotly_chart(fig2d, use_container_width=True)
             download_plotly_html(fig2d, "mixture_contour2D_ternary.html", "Download 2D Map as HTML")
 
-    # Classic DoE ALWAYS runs here
+        # IMPORTANT: do not fall through to Classic DoE
+        st.stop()
+
+    # ======================================================
+    # CLASSIC DOE MODE (Quadratic)
+    # ======================================================
     st.header("STEP 3 — Model & Visualize (Quadratic)")
 
-    # --- pull state safely
     df_state = st.session_state.get("results_df")
     coded_df = st.session_state.get("coded")
     factor_specs = st.session_state.get("factor_specs", [])
 
-    # --- guards
     if df_state is None or not isinstance(df_state, pd.DataFrame) or df_state.empty:
         st.info("Upload results in STEP 2 (sidebar) first.")
         st.stop()
@@ -1407,13 +1423,11 @@ with tab3:
         st.info("No 'Results' column yet. Compute Results in the sidebar first.")
         st.stop()
 
-    # --- local copies
     df = df_state.copy()
     coded_df = coded_df.copy()
 
     factor_cols = [f["name"] for f in factor_specs]
 
-    # align row count
     if len(df) != len(coded_df):
         st.warning(
             "Uploaded table row count differs from the coded design. "
@@ -1433,14 +1447,10 @@ with tab3:
     df_fit = df.loc[ok].reset_index(drop=True)
     coded_fit = coded_df.loc[ok].reset_index(drop=True)
 
-    # --- fit model
     X, term_names = build_quadratic_matrix(coded_fit, factor_cols)
     coef, yhat = fit_lstsq(X, df_fit["Results"].to_numpy(dtype=float))
     r2v = r2_score(df_fit["Results"].to_numpy(dtype=float), yhat)
 
-    # =========================
-    # Model diagnostics
-    # =========================
     st.subheader("Model quality")
     c1, c2 = st.columns(2)
     with c1:
@@ -1464,11 +1474,10 @@ with tab3:
 
     fig_res = go.Figure()
 
-    # ±2σ band
     fig_res.add_trace(
         go.Scatter(
             x=np.concatenate([pred_s, pred_s[::-1]]),
-            y=np.concatenate([2*sigma*np.ones_like(pred_s), (-2*sigma)*np.ones_like(pred_s)[::-1]]),
+            y=np.concatenate([2 * sigma * np.ones_like(pred_s), (-2 * sigma) * np.ones_like(pred_s)[::-1]]),
             fill="toself",
             name="±2σ band",
             hoverinfo="skip",
@@ -1477,11 +1486,10 @@ with tab3:
             showlegend=True,
         )
     )
-    # ±1σ band
     fig_res.add_trace(
         go.Scatter(
             x=np.concatenate([pred_s, pred_s[::-1]]),
-            y=np.concatenate([1*sigma*np.ones_like(pred_s), (-1*sigma)*np.ones_like(pred_s)[::-1]]),
+            y=np.concatenate([1 * sigma * np.ones_like(pred_s), (-1 * sigma) * np.ones_like(pred_s)[::-1]]),
             fill="toself",
             name="±1σ band",
             hoverinfo="skip",
@@ -1490,8 +1498,8 @@ with tab3:
             showlegend=True,
         )
     )
-    # reference lines
-    for yline, nm in [(0.0, "0"), (sigma, "+1σ"), (-sigma, "-1σ"), (2*sigma, "+2σ"), (-2*sigma, "-2σ")]:
+
+    for yline, nm in [(0.0, "0"), (sigma, "+1σ"), (-sigma, "-1σ"), (2 * sigma, "+2σ"), (-2 * sigma, "-2σ")]:
         fig_res.add_trace(
             go.Scatter(
                 x=[pred_s.min(), pred_s.max()],
@@ -1503,7 +1511,7 @@ with tab3:
                 showlegend=(nm in ["0", "+1σ", "+2σ"]),
             )
         )
-    # residual points
+
     fig_res.add_trace(
         go.Scatter(
             x=pred,
@@ -1532,9 +1540,6 @@ with tab3:
     st.plotly_chart(fig, use_container_width=True)
     download_plotly_html(fig, "coefficients_pareto.html", "Download as HTML")
 
-    # =========================
-    # Surfaces + optimization
-    # =========================
     st.divider()
     st.subheader("Response surfaces (2D contour + 3D surface)")
 
