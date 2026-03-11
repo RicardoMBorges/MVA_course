@@ -1,1637 +1,2056 @@
-# ==========================================================
-# DoE Toolkit (NumPy-only designs)
-# + Quadratic model + visualization + response surfaces
-# ==========================================================
 
-import itertools
+# app.py
+# Multivariate Data Analysis Course (Streamlit)
+# Tabs: Import -> Preprocess -> Explore -> Model -> Validate -> Interpret
+# All visualizations are Plotly: hover + zoom + downloadable as HTML
+
+import io
+import json
+import zipfile
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
+from pathlib import Path
+
+
 import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-import plotly.figure_factory as ff
-from scipy.spatial import Delaunay
-import math
 import streamlit as st
-from pathlib import Path
-from PIL import Image
-
-# MUST be the first Streamlit call
-st.set_page_config(page_title="DoE Toolkit", layout="wide")
-
-# -----------------------------
-# LOGOS — AFTER page config
-# -----------------------------
-
-STATIC_DIR = Path(__file__).parent / "static"
-
-laabio_logo = STATIC_DIR / "LAABio.png"
-doe_logo = STATIC_DIR / "logo_DoE.png"
-
-col_left, col_center, col_right = st.columns([1.2, 2, 1.2])
-
-# Center logo (Main DoE branding)
-if doe_logo.exists():
-    try:
-        st.sidebar.image(Image.open(doe_logo), use_container_width=True)
-    except Exception:
-        pass
-
-if laabio_logo.exists():
-    try:
-        st.sidebar.image(Image.open(laabio_logo), use_container_width=True)
-    except Exception:
-        pass
-
-st.sidebar.markdown("---")
-
-st.sidebar.link_button(
-    "📘 Tutorial (GitHub)",
-    "https://github.com/RicardoMBorges/DoE_pipeline_st/blob/main/tutorial.md"
+from sklearn.decomposition import PCA
+from sklearn.impute import SimpleImputer
+from sklearn.model_selection import StratifiedKFold, cross_val_predict
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import (
+    confusion_matrix,
+    classification_report,
+    accuracy_score,
+    balanced_accuracy_score,
+    roc_auc_score,
+    roc_curve,
 )
 
+# -------------------------
+# Page config
+# -------------------------
+st.set_page_config(
+    page_title="Multivariate Data Analysis Course",
+    layout="wide",
+)
 
-st.title("Design of Experiments (DoE) — Toolkit")
+# -----------------------------
+# LOGOs (optional)
+# -----------------------------
+STATIC_DIR = Path(__file__).parent / "static"
+for logo_name in ["LAABio.png"]: #"logo_massQL.png", 
+    p = STATIC_DIR / logo_name
+    try:
+        from PIL import Image
+        st.sidebar.image(Image.open(p), use_container_width=True)
+    except Exception:
+        pass
 
-st.markdown("""
-This app helps you plan and analyze experiments in **any domain** (chemistry, biology, engineering, optimization, etc.).
+st.sidebar.divider()
+if st.sidebar.button("🧹 Clear stored figures"):
+    st.session_state["figs"] = {}
+    st.sidebar.success("Stored figures cleared.")
+    
 
-You can:
-
-1. Generate experimental designs (factorial, CCD, Box–Behnken, fractional, LHS)
-2. Export a run sheet for the lab/bench
-3. Upload the completed table with measured responses
-4. Fit a **quadratic** model (main effects + interactions + curvature)
-5. Visualize response surfaces (2D contour + 3D surface)
-6. Search for **best predicted conditions** and validate experimentally
-""")
-
-# ==========================================================
-# DESIGN GENERATORS (Pure NumPy)
-# ==========================================================
-
-def full_factorial_2level(k: int) -> np.ndarray:
-    return np.array(list(itertools.product([-1, 1], repeat=k)), dtype=float)
-
-def box_behnken(k: int) -> np.ndarray:
-    if k < 3:
-        raise ValueError("Box-Behnken requires at least 3 factors.")
-    design = []
-    for i in range(k):
-        for j in range(i + 1, k):
-            for pair in itertools.product([-1, 1], repeat=2):
-                row = [0] * k
-                row[i] = pair[0]
-                row[j] = pair[1]
-                design.append(row)
-    design.append([0] * k)  # center point
-    return np.array(design, dtype=float)
-
-def central_composite(k: int) -> np.ndarray:
-    factorial = full_factorial_2level(k)
-    axial = []
-    alpha = float(np.sqrt(k))  # rotatable-ish default
-    for i in range(k):
-        row_pos = [0] * k
-        row_neg = [0] * k
-        row_pos[i] = alpha
-        row_neg[i] = -alpha
-        axial.append(row_pos)
-        axial.append(row_neg)
-    center = np.zeros((1, k), dtype=float)
-    return np.vstack([factorial, np.array(axial, dtype=float), center])
+# -------------------------
+# Helpers
+# -------------------------
+def _safe_filename(s: str) -> str:
+    keep = []
+    for ch in s:
+        if ch.isalnum() or ch in ("-", "_", ".", " "):
+            keep.append(ch)
+    out = "".join(keep).strip().replace(" ", "_")
+    return out or "figure"
 
 
-def full_factorial_3level(k: int) -> np.ndarray:
-    """
-    3-level full factorial in coded space: {-1, 0, +1}
-    Runs = 3^k (can explode quickly).
-    """
-    levels = [-1.0, 0.0, 1.0]
-    return np.array(list(itertools.product(levels, repeat=k)), dtype=float)
+def fig_to_html_bytes(fig: go.Figure) -> bytes:
+    # truly self-contained (bigger files, but works offline)
+    html = fig.to_html(full_html=True, include_plotlyjs="inline")
+    return html.encode("utf-8")
 
 
-def lhs_design(n_runs: int, k: int, seed: int = 123) -> np.ndarray:
-    """
-    Latin Hypercube Sampling in coded space approximately in [-1, +1].
-    Good for low-resolution exploration when k is large.
-    """
-    rng = np.random.default_rng(seed)
-    # Stratify [0,1] into n bins; sample one from each bin per factor
-    H = np.zeros((n_runs, k), dtype=float)
-    for j in range(k):
-        cut = np.linspace(0, 1, n_runs + 1)
-        u = rng.random(n_runs)
-        pts = cut[:-1] + u * (cut[1:] - cut[:-1])
-        rng.shuffle(pts)
-        H[:, j] = pts
-    # map [0,1] -> [-1,1]
-    return 2.0 * H - 1.0
-
-
-def _parse_generator(gen: str, base_names: list[str]) -> list[int]:
-    g = gen.strip().upper().replace(" ", "")
-    if g == "":
-        raise ValueError("Empty generator.")
-
-    # must be at least 2 letters (avoid "A" which duplicates base factor)
-    if len(g) < 2:
-        raise ValueError(f"Generator '{gen}' must have at least 2 base letters (e.g., AB).")
-
-    # no repeated letters (avoid AA -> constant)
-    if len(set(g)) != len(g):
-        raise ValueError(f"Generator '{gen}' repeats a letter (e.g., AA). Not allowed.")
-
-    idx = []
-    for ch in g:
-        if ch not in base_names:
-            raise ValueError(f"Generator '{gen}' uses unknown base factor '{ch}'. Base={base_names}")
-        idx.append(base_names.index(ch))
-    return idx
-
-
-def fractional_factorial_2level_regular(
-    base_k: int,
-    generators: list[str],
-) -> np.ndarray:
-    """
-    Regular 2-level fractional factorial.
-
-    You build a 2^(base_k) full factorial in base factors A,B,C,...
-    Then add derived factors defined by generators, e.g.:
-      generators=["AB", "AC"] means:
-        D = A*B
-        E = A*C 
-    For simplicity: generators must use ONLY base letters A.. (no derived letters).
-
-    Total factors = base_k + len(generators)
-    Runs = 2^(base_k)
-    """
-    if base_k < 2:
-        raise ValueError("base_k must be >= 2")
-
-    base_names = [chr(ord("A") + i) for i in range(base_k)]
-    base = full_factorial_2level(base_k)  # shape: (2^base_k, base_k)
-
-    derived_cols = []
-    for gen in generators:
-        idx = _parse_generator(gen, base_names)
-        col = np.prod(base[:, idx], axis=1).reshape(-1, 1)
-        derived_cols.append(col)
-
-    if len(derived_cols) > 0:
-        return np.hstack([base] + derived_cols).astype(float)
-
-    return base.astype(float)
-
-# ==========================================================
-# MODEL HELPERS
-# ==========================================================
-
-def build_quadratic_matrix(df_coded: pd.DataFrame, factor_cols: list[str]) -> tuple[np.ndarray, list[str]]:
-    """
-    Quadratic model basis:
-      1
-      x_i
-      x_i*x_j  (i<j)
-      x_i^2
-    """
-    n = len(df_coded)
-    X_parts = [np.ones((n, 1), dtype=float)]
-    names = ["Intercept"]
-
-    # linear
-    for c in factor_cols:
-        X_parts.append(df_coded[[c]].to_numpy(dtype=float))
-        names.append(c)
-
-    # interactions
-    for i in range(len(factor_cols)):
-        for j in range(i + 1, len(factor_cols)):
-            xi = df_coded[factor_cols[i]].to_numpy(dtype=float)
-            xj = df_coded[factor_cols[j]].to_numpy(dtype=float)
-            X_parts.append((xi * xj).reshape(-1, 1))
-            names.append(f"{factor_cols[i]}*{factor_cols[j]}")
-
-    # squares
-    for c in factor_cols:
-        xi = df_coded[c].to_numpy(dtype=float)
-        X_parts.append((xi ** 2).reshape(-1, 1))
-        names.append(f"{c}^2")
-
-    X = np.hstack(X_parts)
-    return X, names
-
-def fit_lstsq(X: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    coef, *_ = np.linalg.lstsq(X, y, rcond=None)
-    yhat = X @ coef
-    return coef.flatten(), yhat.flatten()
-
-def r2_score(y: np.ndarray, yhat: np.ndarray) -> float:
-    y = np.asarray(y, dtype=float)
-    yhat = np.asarray(yhat, dtype=float)
-    ss_res = np.sum((y - yhat) ** 2)
-    ss_tot = np.sum((y - np.mean(y)) ** 2)
-    return float(1 - ss_res / ss_tot) if ss_tot > 0 else float("nan")
-
-def predict_quadratic(point: dict, coef: np.ndarray, factor_cols: list[str]) -> float:
-    """
-    point: dict factor->coded float
-    coef: fitted coefficients aligned with build_quadratic_matrix()
-    """
-    x = np.array([point[c] for c in factor_cols], dtype=float)
-    row = [1.0]                       # intercept
-    row.extend(list(x))               # linear
-    for i in range(len(x)):           # interactions
-        for j in range(i + 1, len(x)):
-            row.append(x[i] * x[j])
-    for i in range(len(x)):           # squares
-        row.append(x[i] ** 2)
-    return float(np.dot(np.array(row, dtype=float), coef))
-
-def coded_to_real_value(coded_val: float, spec: dict) -> float:
-    """
-    Map coded value to real value by linear interpolation using low/center/high.
-    Handles coded values beyond [-1,1] (e.g., CCD axial points).
-    """
-    low, center, high = float(spec["low"]), float(spec["center"]), float(spec["high"])
-    if coded_val == 0:
-        return center
-    # piecewise linear: [-1..0] and [0..+1], extend linearly beyond
-    if coded_val < 0:
-        # between low (-1) and center (0)
-        return center + coded_val * (center - low)
-    else:
-        # between center (0) and high (+1)
-        return center + coded_val * (high - center)
-
-# ----------------------------------------------------------
-# Utility: Download Plotly figure as standalone HTML
-# ----------------------------------------------------------
-def download_plotly_html(fig, filename: str, button_label: str):
-    html = fig.to_html(full_html=True, include_plotlyjs="cdn")
+def add_download_html_button(fig: go.Figure, label: str, filename: str):
     st.download_button(
-        label=button_label,
-        data=html,
-        file_name=filename,
+        label=label,
+        data=fig_to_html_bytes(fig),
+        file_name=f"{_safe_filename(filename)}.html",
         mime="text/html",
         use_container_width=True,
     )
 
-def run_mixture_design_extraction():
-    #st.title("Mixture Design – Extraction Solvent Optimization")
 
-    n = st.selectbox("Number of solvents", [2, 3, 4], index=1)
-    resolution = st.slider("Grid resolution", 3, 40, 5)
+def zip_html(figs: Dict[str, go.Figure]) -> bytes:
+    buff = io.BytesIO()
+    with zipfile.ZipFile(buff, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, fig in figs.items():
+            zf.writestr(f"{_safe_filename(name)}.html", fig_to_html_bytes(fig))
+    buff.seek(0)
+    return buff.read()
 
-    st.markdown("### Solvent names + bounds (fractions)")
-    names, mins, maxs = [], [], []
+def try_read_table(uploaded_file) -> pd.DataFrame:
+    name = uploaded_file.name.lower()
+    raw = uploaded_file.getvalue()
 
-    for i in range(n):
-        name = st.text_input(
-            f"Solvent {i+1} name",
-            f"S{i+1}",
-            key=f"solv_name_{i}",
-        )
+    if name.endswith(".csv"):
+        # Try common separators
+        last_err = None
+        for sep in [",", ";", "\t"]:
+            try:
+                df = pd.read_csv(io.BytesIO(raw), sep=sep, header=0)
+                # must have at least 2 columns in this course format
+                if df.shape[1] >= 2:
+                    return df
+            except Exception as e:
+                last_err = e
+        raise last_err or ValueError("Could not read CSV.")
+    elif name.endswith(".xlsx") or name.endswith(".xls"):
+        return pd.read_excel(io.BytesIO(raw), header=0)
+    else:
+        raise ValueError("Unsupported file type. Upload CSV or Excel.")
 
-        c1, c2 = st.columns(2)
-        mn = c1.number_input(
-            f"Min fraction (Solvent {i+1}: {name})",
-            0.0, 1.0, 0.0, 0.01,
-            key=f"min_{i}",
-        )
-        mx = c2.number_input(
-            f"Max fraction (Solvent {i+1}: {name})",
-            0.0, 1.0, 1.0, 0.01,
-            key=f"max_{i}",
-        )
 
-        names.append(name.strip() if name else f"S{i+1}")
-        mins.append(float(mn))
-        maxs.append(float(mx))
+def parse_course_table(
+    df: pd.DataFrame,
+    row_label_col: str,
+    sample_cols: List[str],
+    class_row_label: Optional[str],
+    feature_rows: List[str],
+) -> Tuple[pd.DataFrame, Optional[pd.Series]]:
+    """
+    Accepts course/MetaboAnalyst-like layout:
+      - columns = samples
+      - first column = row labels (ATTRIBUTE_class, Feature_1, Feature_2, ...)
+    Returns:
+      - X_df: rows=samples, cols=features  (sklearn-friendly)
+      - y: optional target series aligned to samples
+    """
+    df2 = df.copy()
 
-    # Feasibility checks
-    if any(mn > mx for mn, mx in zip(mins, maxs)):
-        st.error("At least one solvent has min > max. Fix the bounds.")
-        return
+    # Normalize: ensure row label col exists
+    if row_label_col not in df2.columns:
+        raise ValueError(f"Row label column '{row_label_col}' not found.")
 
-    if sum(mins) > 1.0 + 1e-9:
-        st.error("Sum of minimum fractions is > 1. Reduce mins.")
-        return
+    # Set row labels as index
+    df2[row_label_col] = df2[row_label_col].astype(str)
+    df2 = df2.set_index(row_label_col)
 
-    if sum(maxs) < 1.0 - 1e-9:
-        st.error("Sum of maximum fractions is < 1. Increase maxs so fractions can sum to 1.")
-        return
+    # Keep only selected sample columns
+    missing_samples = [c for c in sample_cols if c not in df2.columns]
+    if missing_samples:
+        raise ValueError(f"Missing sample columns: {missing_samples}")
 
-    X = generate_constrained_simplex_grid(n, resolution, mins=mins, maxs=maxs)
+    df2 = df2[sample_cols]
 
-    if X.size == 0:
-        st.error("No feasible mixture points found with these min/max constraints and grid resolution.")
-        return
+    # y (class row)
+    y = None
+    if class_row_label:
+        if class_row_label not in df2.index:
+            raise ValueError(f"Class row '{class_row_label}' not found in row labels.")
+        y = df2.loc[class_row_label].astype(str)
+        # Remove class row from numeric block if present in feature list
+        if class_row_label in feature_rows:
+            feature_rows = [r for r in feature_rows if r != class_row_label]
 
-    st.subheader("Generated design points")
-    df = pd.DataFrame(X, columns=names)
+    # Feature block
+    missing_features = [r for r in feature_rows if r not in df2.index]
+    if missing_features:
+        raise ValueError(f"Missing feature rows: {missing_features}")
 
-    # store mixture design in session state (so other tabs can use it)
-    st.session_state["mixture_df"] = df
-    st.session_state["mixture_names"] = names
-    st.session_state["mixture_n"] = n
-    st.session_state["mixture_resolution"] = resolution
+    feat_block = df2.loc[feature_rows].apply(pd.to_numeric, errors="coerce")
 
-    st.dataframe(df, use_container_width=True)
+    # Transpose to sklearn-friendly: samples x features
+    X_df = feat_block.T
+    X_df.index.name = "SampleID"
 
-    # Download design
-    st.download_button(
-        "Download design CSV",
-        df.to_csv(index=False).encode("utf-8"),
-        file_name="mixture_design_extraction.csv",
-        mime="text/csv"
+    # y aligned to X_df index
+    if y is not None:
+        y = y.loc[X_df.index]
+
+    return X_df, y
+
+def numeric_columns(df: pd.DataFrame) -> List[str]:
+    return [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+
+
+def build_missing_report(df: pd.DataFrame) -> pd.DataFrame:
+    rep = pd.DataFrame(
+        {
+            "column": df.columns,
+            "dtype": [str(t) for t in df.dtypes],
+            "missing_n": df.isna().sum().values,
+            "missing_%": (df.isna().mean().values * 100.0),
+            "unique_n": [df[c].nunique(dropna=True) for c in df.columns],
+        }
+    )
+    rep = rep.sort_values(["missing_%", "unique_n"], ascending=[False, True])
+    return rep
+
+
+# -------------------------
+# State container
+# -------------------------
+@dataclass
+class AppData:
+    raw: Optional[pd.DataFrame] = None
+    X_cols: Optional[List[str]] = None
+    y_col: Optional[str] = None
+    id_col: Optional[str] = None
+    color_col: Optional[str] = None
+
+    # processed matrices
+    X_raw: Optional[pd.DataFrame] = None
+    y_raw: Optional[pd.Series] = None
+    meta: Optional[pd.DataFrame] = None
+
+    X_proc: Optional[np.ndarray] = None
+    feature_names: Optional[List[str]] = None
+    X_pre_scale: Optional[pd.DataFrame] = None
+
+
+if "app" not in st.session_state:
+    st.session_state["app"] = AppData()
+
+APP: AppData = st.session_state["app"]
+
+st.sidebar.divider()
+if st.sidebar.button("🧹 Clear APP data (reset preprocessing/models)"):
+    st.session_state["app"] = AppData()
+    APP = st.session_state["app"]
+    st.sidebar.success("APP state reset.")
+
+# Keep figures for "download all"
+if "figs" not in st.session_state:
+    st.session_state["figs"] = {}
+FIGS: Dict[str, go.Figure] = st.session_state["figs"]
+
+
+def store_fig(key: str, fig: go.Figure):
+    FIGS[key] = fig
+
+# --------- Math funtions for Normalization
+def _as_numeric_df(X_df: pd.DataFrame) -> pd.DataFrame:
+    return X_df.apply(pd.to_numeric, errors="coerce")
+
+def quantile_normalize_rows(X: pd.DataFrame) -> pd.DataFrame:
+    """
+    Quantile normalization across samples (rows), treating each sample distribution equally.
+    X is samples x features.
+    Returns samples x features.
+    """
+    # work as numpy for speed
+    A = X.to_numpy(dtype=float, copy=True)      # (n_samples, n_features)
+    At = A.T                                    # (n_features, n_samples)
+
+    # argsort each sample (column in At)
+    order = np.argsort(At, axis=0)              # (n_features, n_samples)
+    sorted_vals = np.take_along_axis(At, order, axis=0)
+
+    # average across samples at each rank
+    mean_sorted = np.nanmean(sorted_vals, axis=1)   # (n_features,)
+
+    # put the mean_sorted back into original positions (inverse sort)
+    out = np.empty_like(At)
+    np.put_along_axis(out, order, mean_sorted[:, None], axis=0)
+
+    return pd.DataFrame(out.T, index=X.index, columns=X.columns)
+
+
+def sample_normalize(
+    X: pd.DataFrame,
+    method: str,
+    sample_factor: Optional[pd.Series] = None,
+    ref_sample: Optional[pd.Series] = None,
+    ref_feature: Optional[str] = None,
+    group_labels: Optional[pd.Series] = None,
+    eps: float = 1e-12,
+) -> pd.DataFrame:
+    """
+    X: samples x features
+    Returns X normalized by the chosen method.
+    """
+    Xn = X.copy()
+
+    if method == "None":
+        return Xn
+
+    # -----------------------------------------------------
+    # Sample-specific factor normalization
+    # -----------------------------------------------------
+    if method == "Sample-specific normalization (factor)":
+        if sample_factor is None:
+            raise ValueError("sample_factor is required for sample-specific normalization.")
+        f = pd.to_numeric(sample_factor, errors="coerce").astype(float)
+        if f.isna().any():
+            raise ValueError("Sample factor has missing/non-numeric values.")
+        return Xn.div(f.values, axis=0)
+
+    # -----------------------------------------------------
+    # Simple row scalings
+    # -----------------------------------------------------
+    if method == "Normalization by sum":
+        s = Xn.sum(axis=1).replace(0, np.nan)
+        return Xn.div(s.values, axis=0)
+
+    if method == "Normalization by median":
+        m = Xn.median(axis=1).replace(0, np.nan)
+        return Xn.div(m.values, axis=0)
+
+    # -----------------------------------------------------
+    # PQN (reference sample)
+    # -----------------------------------------------------
+    if method == "Normalization by a reference sample (PQN)":
+        if ref_sample is None:
+            raise ValueError("ref_sample is required for PQN.")
+
+        ref = pd.to_numeric(ref_sample, errors="coerce").astype(float)
+
+        # Xn: (samples x features)
+        # ref: (features,)
+        quot = Xn.div(ref.values + eps, axis=1)
+        factors = quot.median(axis=1).replace(0, np.nan)
+
+        return Xn.div(factors.values, axis=0)
+
+    # -----------------------------------------------------
+    # Group PQN
+    # -----------------------------------------------------
+    if method == "Normalization by a pooled sample from group (group PQN)":
+        if group_labels is None:
+            raise ValueError("group_labels is required for group PQN.")
+
+        gl = group_labels.astype(str)
+        Xout = Xn.copy()
+
+        for g in gl.unique():
+            idx = gl == g
+            ref = Xn.loc[idx].median(axis=0)  # pooled reference per group
+            quot = Xn.loc[idx].div(ref.values + eps, axis=1)
+            factors = quot.median(axis=1).replace(0, np.nan)
+            Xout.loc[idx] = Xn.loc[idx].div(factors.values, axis=0)
+
+        return Xout
+
+    # -----------------------------------------------------
+    # Reference feature normalization
+    # -----------------------------------------------------
+    if method == "Normalization by reference feature":
+        if ref_feature is None:
+            raise ValueError("ref_feature is required for reference-feature normalization.")
+        if ref_feature not in Xn.columns:
+            raise ValueError(f"Reference feature '{ref_feature}' not found in X.")
+
+        f = Xn[ref_feature].replace(0, np.nan)
+        return Xn.div(f.values, axis=0)
+
+    # -----------------------------------------------------
+    # Quantile normalization
+    # -----------------------------------------------------
+    if method == "Quantile normalization":
+        n_samp, n_feat = Xn.shape
+        if n_samp * n_feat > 5_000_000:
+            raise ValueError(
+                f"Quantile normalization is too heavy for this size ({n_samp}×{n_feat}). "
+                "Reduce features/samples or use another normalization."
+            )
+        return quantile_normalize_rows(Xn)
+
+    raise ValueError(f"Unknown sample normalization method: {method}")
+
+
+def transform_data(X: pd.DataFrame, method: str, eps: float = 1e-12) -> pd.DataFrame:
+    Xt = X.copy()
+
+    if method == "None":
+        return Xt
+
+    if method in {"Log transformation (base 10)", "Log transformation (base 2)"}:
+        if (Xt.values < 0).any():
+            raise ValueError("Log transform selected but data contains negative values (often from batch centering).")
+
+    if method == "Log transformation (base 10)":
+        return np.log10(Xt + eps)
+
+    if method == "Log transformation (base 2)":
+        return np.log2(Xt + eps)
+    if method == "Square root transformation":
+        return np.sqrt(np.clip(Xt, a_min=0, a_max=None))
+
+    if method == "Cube root transformation":
+        # supports negatives too
+        return np.cbrt(Xt)
+
+    if method == "Variance stabilizing normalization (VSN)":
+        # Simple, robust VSN-like transform for teaching:
+        # asinh(x / s), with s = median of nonzero values (global)
+        vals = Xt.values.flatten()
+        vals = vals[np.isfinite(vals)]
+        vals = vals[vals > 0]
+        s = np.median(vals) if vals.size else 1.0
+        s = float(s) if s > 0 else 1.0
+        return np.arcsinh(Xt / s)
+
+    raise ValueError(f"Unknown transformation method: {method}")
+
+
+def batch_align(X: pd.DataFrame, batch: Optional[pd.Series], method: str) -> pd.DataFrame:
+    """
+    Very simple "alignment" = batch correction / centering.
+    X: samples x features
+    """
+    if batch is None or method == "None":
+        return X
+
+    b = batch.astype(str)
+    Xc = X.copy()
+
+    if method == "Center within batch (subtract batch mean)":
+        return Xc - Xc.groupby(b).transform("mean")
+
+    if method == "Center within batch (subtract batch median)":
+        return Xc - Xc.groupby(b).transform("median")
+
+    raise ValueError(f"Unknown alignment method: {method}")
+
+# -------------------------
+# Sidebar: Data import + column mapping
+# -------------------------
+st.sidebar.title("Data Import")
+
+uploaded = st.sidebar.file_uploader(
+    "Upload CSV or Excel",
+    type=["csv", "xlsx", "xls"],
+    accept_multiple_files=False,
+    help="""
+Accepted format (your example):
+
+• Columns = SAMPLES (Sample1, Sample2, ...)
+• Rows = VARIABLES (Feature_1, Feature_2, ...)
+• One special row (optional): ATTRIBUTE_class (labels per sample)
+
+Example:
+,Sample1,Sample2
+ATTRIBUTE_class,Control,Treated
+Feature_1,12.5,18.4
+Feature_2,102,150
+""",
+)
+
+if uploaded is not None:
+    try:
+        df_in = try_read_table(uploaded)
+        st.session_state["raw_uploaded_df"] = df_in
+        st.sidebar.success(f"Loaded: {uploaded.name}  ({df_in.shape[0]} rows × {df_in.shape[1]} cols)")
+    except Exception as e:
+        st.sidebar.error(f"Failed to read file: {e}")
+        st.session_state["raw_uploaded_df"] = None
+
+
+# -------------------------
+# Mapping UI for this special format
+# -------------------------
+df_u = st.session_state.get("raw_uploaded_df", None)
+
+if df_u is not None and not df_u.empty:
+    st.sidebar.subheader("Format mapping (columns=samples, rows=variables)")
+
+    # 1) Choose which column holds the row labels (often the first unnamed column)
+    # Pandas may name it "Unnamed: 0" or it might be an empty string depending on file.
+    candidate_label_cols = df_u.columns.tolist()
+    default_label_col = candidate_label_cols[0]
+
+    row_label_col = st.sidebar.selectbox(
+        "Row-label column (contains ATTRIBUTE_class / Feature_1 / ...)",
+        options=candidate_label_cols,
+        index=0,
+        help="This is usually the first column (often named 'Unnamed: 0' in CSV).",
     )
 
-    # Visualization of the design space
-    st.subheader("Design space visualization")
-    if n == 2:
-        fig = px.scatter(df, x=names[0], y=names[1], title="Binary mixture design")
-        st.plotly_chart(fig, use_container_width=True)
+    # Create a preview list of row labels for selection
+    row_labels = df_u[row_label_col].astype(str).tolist()
 
-    elif n == 3:
-        fig = px.scatter_ternary(df, a=names[0], b=names[1], c=names[2],
-                                 title="Ternary mixture design")
-        st.plotly_chart(fig, use_container_width=True)
+    # 2) Choose sample columns (default: all except row-label column)
+    sample_candidates = [c for c in df_u.columns if c != row_label_col]
+    sample_cols = st.sidebar.multiselect(
+        "Sample columns (observations)",
+        options=sample_candidates,
+        default=sample_candidates,
+        help="These are the columns that correspond to samples (Sample1, Sample2, ...).",
+    )
 
-    elif n == 4:
-        fig = px.scatter_3d(df, x=names[0], y=names[1], z=names[2], color=names[3],
-                            title="Quaternary mixture design (color = 4th solvent)")
-        st.plotly_chart(fig, use_container_width=True)
+    # 3) Choose the classification row (optional)
+    default_class = "ATTRIBUTE_class" if "ATTRIBUTE_class" in row_labels else None
+    class_row_label = st.sidebar.selectbox(
+        "Classification row (optional)",
+        options=["(none)"] + row_labels,
+        index=(row_labels.index(default_class) + 1) if default_class else 0,
+        help="Pick the row that contains group/class labels per sample (e.g., ATTRIBUTE_class).",
+    )
+    if class_row_label == "(none)":
+        class_row_label = None
 
-def generate_simplex_grid(n, resolution):
+    # 4) Choose feature rows (data block)
+    # Default: all rows except the chosen class row
+    default_feature_rows = [r for r in row_labels if r != class_row_label]
+    feature_rows = st.sidebar.multiselect(
+        "Feature rows (variables used as X)",
+        options=row_labels,
+        default=default_feature_rows,
+        help="Pick the rows that represent numeric features (Feature_1, Feature_2, ...).",
+    )
 
-    if n == 2:
-        x = np.linspace(0, 1, resolution + 1)
-        return np.column_stack([x, 1 - x])
-
-    elif n == 3:
-        points = []
-        for i in range(resolution + 1):
-            for j in range(resolution + 1 - i):
-                k = resolution - i - j
-                points.append([i, j, k])
-        points = np.array(points) / resolution
-        return points
-
-    elif n == 4:
-        points = []
-        for i in range(resolution + 1):
-            for j in range(resolution + 1 - i):
-                for k in range(resolution + 1 - i - j):
-                    l = resolution - i - j - k
-                    points.append([i, j, k, l])
-        points = np.array(points) / resolution
-        return points
-
-
-def generate_constrained_simplex_grid(n, resolution, mins=None, maxs=None):
-    """
-    Generates mixture points on a simplex lattice and filters by min/max constraints.
-    All fractions sum to 1.
-
-    mins/maxs: lists of length n with bounds in [0,1].
-    """
-    if mins is None:
-        mins = [0.0] * n
-    if maxs is None:
-        maxs = [1.0] * n
-
-    mins = np.array(mins, dtype=float)
-    maxs = np.array(maxs, dtype=float)
-
-    pts = []
-
-    if n == 2:
-        for i in range(resolution + 1):
-            x1 = i / resolution
-            x2 = 1 - x1
-            p = np.array([x1, x2])
-            if np.all(p >= mins) and np.all(p <= maxs):
-                pts.append(p)
-
-    elif n == 3:
-        for i in range(resolution + 1):
-            for j in range(resolution + 1 - i):
-                k = resolution - i - j
-                p = np.array([i, j, k], dtype=float) / resolution
-                if np.all(p >= mins) and np.all(p <= maxs):
-                    pts.append(p)
-
-    elif n == 4:
-        for i in range(resolution + 1):
-            for j in range(resolution + 1 - i):
-                for k in range(resolution + 1 - i - j):
-                    l = resolution - i - j - k
-                    p = np.array([i, j, k, l], dtype=float) / resolution
-                    if np.all(p >= mins) and np.all(p <= maxs):
-                        pts.append(p)
-
-    return np.array(pts)
-
-
-
-def visualize_mixture(design, names):
-
-    n = len(names)
-
-    if n == 2:
-        fig = px.line(
-            x=design[:,0],
-            y=design[:,1],
-            labels={"x": names[0], "y": names[1]},
-            title="Binary Mixture Design"
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-    elif n == 3:
-        df = pd.DataFrame(design, columns=names)
-
-        fig = px.scatter_ternary(
-            df,
-            a=names[0],
-            b=names[1],
-            c=names[2],
-            title="Ternary Mixture Simplex"
-        )
-
-        st.plotly_chart(fig, use_container_width=True)
-        
-    elif n == 4:
-        df = pd.DataFrame(design, columns=names)
-
-        fig = px.scatter_3d(
-            df,
-            x=names[0],
-            y=names[1],
-            z=names[2],
-            color=names[3],
-            title="Quaternary Mixture (Color-coded 4th component)"
-        )
-
-        st.plotly_chart(fig, use_container_width=True)        
-        
-def build_scheffe_quadratic_matrix(df_mix: pd.DataFrame, mix_cols: list[str]) -> tuple[np.ndarray, list[str]]:
-    """
-    Scheffé quadratic mixture model (no intercept):
-      y = sum(b_i x_i) + sum(b_ij x_i x_j)  for i<j
-    No intercept because mixtures satisfy sum(x)=1 (intercept is redundant).
-    """
-    n = len(df_mix)
-    X_parts = []
-    names = []
-
-    # linear terms
-    for c in mix_cols:
-        X_parts.append(df_mix[[c]].to_numpy(dtype=float))
-        names.append(c)
-
-    # pairwise interactions
-    for i in range(len(mix_cols)):
-        for j in range(i + 1, len(mix_cols)):
-            xi = df_mix[mix_cols[i]].to_numpy(dtype=float)
-            xj = df_mix[mix_cols[j]].to_numpy(dtype=float)
-            X_parts.append((xi * xj).reshape(-1, 1))
-            names.append(f"{mix_cols[i]}*{mix_cols[j]}")
-
-    X = np.hstack(X_parts) if X_parts else np.zeros((n, 0), dtype=float)
-    return X, names
-
-
-def predict_scheffe_quadratic(point: dict, coef: np.ndarray, mix_cols: list[str]) -> float:
-    """
-    point: dict solvent->fraction (should sum ~1)
-    coef aligns with build_scheffe_quadratic_matrix()
-    """
-    x = np.array([float(point[c]) for c in mix_cols], dtype=float)
-
-    row = []
-    row.extend(list(x))  # linear
-    for i in range(len(x)):  # pairwise
-        for j in range(i + 1, len(x)):
-            row.append(x[i] * x[j])
-
-    return float(np.dot(np.array(row, dtype=float), coef))
-
-def _read_csv_flexible(uploaded_file) -> pd.DataFrame:
-    try:
-        return pd.read_csv(uploaded_file, sep=";")
-    except Exception:
+    # 5) Parse + store into your APP.* variables (sklearn-friendly orientation)
+    if st.sidebar.button("Apply mapping", type="primary"):
         try:
-            uploaded_file.seek(0)
-        except Exception:
-            pass
-        return pd.read_csv(uploaded_file)
+            X_df, y = parse_course_table(
+                df=df_u,
+                row_label_col=row_label_col,
+                sample_cols=sample_cols,
+                class_row_label=class_row_label,
+                feature_rows=feature_rows,
+            )
 
-def ternary_to_xy(a, b, c):
-    """
-    Map ternary fractions (a,b,c) with a+b+c=1 to 2D coordinates of an equilateral triangle.
-    Vertices:
-      A=(0,0), B=(1,0), C=(0.5, sqrt(3)/2)
-    """
-    x = b + 0.5 * c
-    y = (math.sqrt(3) / 2.0) * c
-    return x, y
+            # Store in your app state (match your earlier design)
+            APP.raw = X_df.reset_index()  # has SampleID column
+            APP.id_col = "SampleID"
 
+            # Add y as a column if present, so the rest of your pipeline can use selectboxes
+            if y is not None:
+                APP.raw["ATTRIBUTE_class"] = y.values
+                APP.y_col = "ATTRIBUTE_class"
+                APP.color_col = "ATTRIBUTE_class"
+            else:
+                APP.y_col = None
+                APP.color_col = None
 
-# ----------------------------------------------------------
-# Session state initialization (prevents KeyError)
-# ----------------------------------------------------------
-defaults = {
-    "coded": None,
-    "design": None,
-    "factor_specs": [],
-    "results_df": None,
-
-    "response_specs_classic": [],
-    "response_specs_mixture": [],
-
-    "mixture_df": None,
-    "mixture_names": None,
-    "mixture_n": None,
-    "mixture_resolution": None,
-    "results_processed_key": None,
-}
+            # X columns are numeric features (after transpose)
+            APP.X_cols = [c for c in APP.raw.columns if c not in {"SampleID", "ATTRIBUTE_class"}]
+            st.sidebar.success(f"Mapped OK: {X_df.shape[0]} samples × {X_df.shape[1]} features")
+            # Reset downstream state (new mapping => preprocessing must be rerun)
+            APP.X_proc = None
+            APP.feature_names = None
+            APP.X_pre_scale = None
+            st.session_state["preprocess_ran"] = False
 
 
-for k0, v0 in defaults.items():
-    if k0 not in st.session_state:
-        st.session_state[k0] = v0
+        except Exception as e:
+            st.sidebar.error(f"Mapping failed: {e}")
 
-
-# -----------------------------
-# Sidebar Navigation
-# -----------------------------
-st.sidebar.title("Design Type")
-
-design_mode = st.sidebar.radio(
-    "Choose Design Type:",
+    with st.sidebar.expander("Quick diagnostics", expanded=False):
+        st.write("Detected row labels:", len(row_labels))
+        st.write("Selected samples:", len(sample_cols))
+        st.write("Selected features:", len(feature_rows))
+        if class_row_label:
+            st.write("Class row:", class_row_label)
+        st.caption("After 'Apply mapping', the app will use sklearn-friendly orientation (rows=samples).")
+# -------------------------
+# Tabs
+# -------------------------
+tabs = st.tabs(
     [
-        "Factorial Design",
-        "Mixture Design (Solvent Optimization)"
+        "1) Import",
+        "2) Preprocessing",
+        "3) Exploration",
+        "4) Modeling",
+        "5) Validation",
+        "6) Interpretation",
     ]
 )
 
+# -------------------------
+# 1) Import
+# -------------------------
+with tabs[0]:
+    st.header("1) Data Import")
 
-# ==========================================================
-# UI TABS
-# ==========================================================
-
-tab1, tab2, tab3 = st.tabs(["STEP 1 — Design", 
-    "STEP 2 — Results", 
-    "STEP 3 — Model (Quadratic) & Plots"])
-
-# ----------------------------------------------------------
-# STEP 1 — DESIGN
-# ----------------------------------------------------------
-with tab1:
-    if design_mode == "Mixture Design (Solvent Optimization)":
-        st.header("STEP 1 — Mixture Design (Extraction Solvent Optimization)")
-        run_mixture_design_extraction()
+    if APP.raw is None:
+        st.info("Upload a dataset in the sidebar to begin.")
     else:
-        # ---- Classic DoE Step 1 (only when NOT mixture) ----
-        st.header("STEP 1 — Create Experimental Design")
+        df = APP.raw
 
-        st.info(
-        """
-**Pick a design**, define factor names and LOW/CENTER/HIGH values, then generate and download the table.
+        c1, c2 = st.columns([1, 1])
+        with c1:
+            st.subheader("Preview")
+            st.dataframe(df.head(50), use_container_width=True)
+        with c2:
+            st.subheader("Shape")
+            st.write(f"Rows: **{df.shape[0]}**")
+            st.write(f"Cols: **{df.shape[1]}**")
+            st.subheader("Missingness report")
+            rep = build_missing_report(df)
+            st.dataframe(rep.head(30), use_container_width=True, height=420)
 
-Tips:
-- If you are not sure: **Box–Behnken**
-- If you want axial points and better curvature estimation: **Central Composite**
-- If you want fast screening with fewer runs: **Fractional factorial** or **LHS**
-"""
-    )
-
-        st.markdown("### Define Response Variables")
-
-        n_responses = st.number_input(
-            "Number of response variables",
-            min_value=1,
-            max_value=5,
-            value=1,
-            step=1,
-            key="n_responses"
-        )
-
-        response_specs = []
-
-        for i in range(n_responses):
-            col1, col2 = st.columns([2, 1])
-            with col1:
-                rname = st.text_input(
-                    f"Response name #{i+1}",
-                    value=f"Response_{i+1}",
-                    key=f"resp_name_{i}"
-                )
-            with col2:
-                goal = st.selectbox(
-                    f"Goal",
-                    ["Maximize", "Minimize"],
-                    key=f"resp_goal_{i}"
-                )
-
-            response_specs.append({"name": rname, "goal": goal})
-
-        design_type = st.selectbox(
-            "Choose Design Type",
-            [
-                "Box-Behnken (recommended)",
-                "Central Composite",
-                "2-Level Full Factorial (2^k)",
-                "3-Level Full Factorial (3^k)",
-                "2-Level Fractional Factorial (regular)",
-                "Latin Hypercube (low-resolution)",
-            ],
-            index=0,
-        )
-
-        k = st.slider("Number of Factors", 2, 6, 3)
-
-        # ---------------------------------------
-        # Extra settings (only used by some designs)
-        # ---------------------------------------
-        base_k = None
-        frac_generators: list[str] = []
-        lhs_runs = None
-        lhs_seed = 123
-
-        # ---------------------------------------
-        # Fractional factorial settings
-        # ---------------------------------------
-        if design_type.startswith("2-Level Fractional"):
-            st.markdown("### Fractional Factorial — Settings")
-
-            st.info(
-                """
-    A fractional factorial reduces the number of experiments by **aliasing** (confounding) some effects.
-
-    How it works:
-    - Choose **base factors** (independent: A, B, C, ...)
-    - Define the remaining factors as **products** of base factors (generators)
-
-    This can shrink the design dramatically.
-
-    Example:
-    k = 5 total factors, base_k = 3  →  runs = 2³ = 8 (instead of 2⁵ = 32)
-    """
-            )
-
-            # --- Base factor selection (safe version)
-
-            if k <= 2:
-                # Only possible option is full factorial
-                base_k = k
-                st.info("With only 2 factors, fractional design is identical to full factorial (2² = 4 runs).")
-            else:
-                base_k = st.slider(
-                    "Number of base factors (independent A, B, C, ...)",
-                    min_value=2,
-                    max_value=k - 1,   # IMPORTANT FIX
-                    value=min(3, k - 1),
-                    key="frac_base_k",
-                )
-
-            st.success(
-                f"Runs (fractional) = **{2**base_k}**   |   Runs (full 2-level) = {2**k}"
-            )
-
-            derived_k = k - base_k
-
-            if derived_k == 0:
-                st.info("No derived factors (k = base_k) → this becomes a full 2-level factorial.")
-            else:
-                st.markdown("#### Generators for derived factors")
-                st.caption(
-                    """
-    Each derived factor must be defined as a product of base factors.
-
-    Examples (valid generators):
-    - AB   → A × B
-    - AC   → A × C
-    - ABC  → A × B × C
-
-    Rules:
-    - Use only the base letters (A..)
-    - No spaces
-    - Order does not matter (AB = BA)
-    """
-                )
-
-                frac_generators = []
-                for gi in range(derived_k):
-                    frac_generators.append(
-                        st.text_input(
-                            f"Generator for derived factor #{gi+1}",
-                            value="AB",
-                            key=f"frac_gen_{gi}",
-                        ).strip().upper()
-                    )
-                # ✅ enforce generator completeness
-                frac_generators = [g for g in frac_generators if g.strip() != ""]
-
-                frac_ok = (len(frac_generators) == derived_k)
-
-                if not frac_ok:
-                    st.error(f"You must provide exactly {derived_k} generator(s). Fill all generator boxes.")
-
-                st.warning(
-                    """
-    ⚠️ Interpretation warning (aliasing):
-    - In lower-resolution fractionals, some **main effects** can be confounded with **2-factor interactions**.
-    - Use fractional designs mainly for **screening** (finding what matters), not final optimization.
-    """
-                )
-
-        # ---------------------------------------
-        # LHS settings
-        # ---------------------------------------
-        if design_type.startswith("Latin Hypercube"):
-            st.markdown("### Latin Hypercube Sampling (LHS) — Settings")
-
-            st.info(
-                """
-    LHS is a **space-filling** design.
-
-    It is great when you have many factors and need **fewer runs** than factorial designs.
-    It is NOT a classic “effect-estimation” design like factorials.
-
-    Good for:
-    - many factors (k ≥ 5)
-    - expensive experiments
-    - broad exploration / response surfaces
-    - ML training data
-
-    Not ideal for:
-    - clean main-effect / interaction interpretation
-    """
-            )
-
-            lhs_runs = st.slider(
-                "Number of runs (LHS)",
-                min_value=max(8, 2 * k),
-                max_value=200,
-                value=4 * k,
-                key="lhs_runs",
-            )
-
-            st.caption(
-                f"""
-    Rule of thumb:
-    - Minimum: 2 × k = {2*k}
-    - Better: 4 × k = {4*k}
-    - Very good coverage: 6–8 × k = {6*k}–{8*k}
-    """
-            )
-
-            lhs_seed = st.number_input(
-                "Random seed (reproducibility)",
-                value=123,
-                step=1,
-                key="lhs_seed",
-            )
-
-            st.warning(
-                """
-    ⚠️ LHS does NOT guarantee:
-    - orthogonality
-    - balanced interaction estimation
-
-    It guarantees:
-    - uniform coverage of each factor range
-    """
-            )
-
-        # ---------------------------------------
-        # Factor definitions (names + low/center/high)
-        # ---------------------------------------
-        factor_specs = []
-        for i in range(k):
-            with st.expander(f"Factor {i+1}", expanded=True):
-                name = st.text_input("Factor Name", value=f"Factor_{i+1}", key=f"name_{i}")
-                low = st.number_input("Low (-1)", value=5.0, key=f"low_{i}")
-                center = st.number_input("Center (0)", value=15.0, key=f"center_{i}")
-                high = st.number_input("High (+1)", value=25.0, key=f"high_{i}")
-
-                if name.strip() == "":
-                    st.error("Factor name cannot be empty.")
-                else:
-                    factor_specs.append({
-                        "name": name.strip(),
-                        "low": low,
-                        "center": center,
-                        "high": high
-                    })
-
-                st.caption("Coded values: -1=Low, 0=Center, +1=High (CCD may include ±sqrt(k)).")
-
-        # ---------------------------------------
-        # Generate design
-        # ---------------------------------------
-        derived_k = (k - base_k) if (design_type.startswith("2-Level Fractional") and base_k is not None) else 0
-        frac_ok = True
-
-        if design_type.startswith("2-Level Fractional"):
-            # must have exactly derived_k generators
-            frac_ok = (base_k is not None) and (len(frac_generators) == derived_k)
-
-        can_generate = True
-        if design_type.startswith("2-Level Fractional") and not frac_ok:
-            can_generate = False
-
-        btn = st.button("Generate Design", type="primary", disabled=not can_generate)
-
-        if btn:
-            # Final validation only at click-time (keeps other tabs from going blank)
-            if design_type.startswith("2-Level Fractional") and not frac_ok:
-                st.error(f"Please provide exactly {derived_k} generator(s) before generating the design.")
-            else:
-                # Build coded design
-                if design_type.startswith("Box"):
-                    coded = box_behnken(k)
-
-                elif design_type.startswith("Central"):
-                    coded = central_composite(k)
-
-                elif design_type.startswith("3-Level Full"):
-                    coded = full_factorial_3level(k)
-
-                elif design_type.startswith("2-Level Fractional"):
-                    coded = fractional_factorial_2level_regular(
-                        base_k=base_k,
-                        generators=frac_generators
-                    )
-
-                elif design_type.startswith("Latin Hypercube"):
-                    coded = lhs_design(n_runs=lhs_runs, k=k, seed=lhs_seed)
-
-                else:
-                    coded = full_factorial_2level(k)
-
-                factor_names = [f["name"] for f in factor_specs]
-
-                # Safety: coded columns must match factor count
-                if coded.shape[1] != len(factor_names):
-                    st.error(
-                        f"Design produced {coded.shape[1]} columns but you defined {len(factor_names)} factors. "
-                        "Check base_k and generators."
-                    )
-                else:
-                    coded_df = pd.DataFrame(coded, columns=factor_names)
-
-                    # Real-valued table for the lab
-                    real_df = coded_df.copy()
-                    for f in factor_specs:
-                        col = f["name"]
-                        real_df[col] = real_df[col].apply(lambda v: coded_to_real_value(float(v), f))
-
-                    real_df.insert(0, "Experiment#", np.arange(1, len(real_df) + 1))
-
-                    # Add response columns dynamically
-                    for r in response_specs:
-                        real_df[r["name"]] = ""
-
-                    # Add combined result column (modeling target)
-                    real_df["Results"] = ""
-
-                    # Store state
-                    st.session_state["response_specs_classic"] = response_specs
-                    st.session_state["coded"] = coded_df
-                    st.session_state["design"] = real_df
-                    st.session_state["factor_specs"] = factor_specs
-
-                    st.success(f"Design created with {len(real_df)} runs.")
-
-        # ==========================================================
-        # DESIGN VISUALIZATION
-        # ==========================================================
-        st.divider()
-        st.subheader("Design Visualization")
-
-        coded_df = st.session_state.get("coded")
-        real_df = st.session_state.get("design")
-        factor_specs_state = st.session_state.get("factor_specs", [])
-
-        if coded_df is None or real_df is None or len(factor_specs_state) == 0:
-            st.info("Generate a design first (click **Generate Design**) to see the design plots.")
+        # Build X/y/meta snapshots
+        if APP.X_cols:
+            APP.X_raw = df[APP.X_cols].copy()
+            APP.feature_names = APP.X_cols.copy()
         else:
-            factor_cols = [f["name"] for f in factor_specs_state]
+            APP.X_raw = None
+            APP.feature_names = None
 
-            space = st.radio(
-                "Plot design in:",
-                ["Coded Space (-1 to +1)", "Real Units"],
-                horizontal=True,
-                key="design_space",
-            )
+        if APP.y_col:
+            APP.y_raw = df[APP.y_col].copy()
+        else:
+            APP.y_raw = None
 
-            plot_df = coded_df.copy() if space.startswith("Coded") else real_df[factor_cols].copy()
+        meta_cols = []
+        if APP.id_col:
+            meta_cols.append(APP.id_col)
+        if APP.color_col and APP.color_col not in meta_cols:
+            meta_cols.append(APP.color_col)
+        if APP.y_col and APP.y_col not in meta_cols:
+            meta_cols.append(APP.y_col)
 
-            col1, col2 = st.columns(2)
-            with col1:
-                fx = st.selectbox("X axis", factor_cols, key="design_fx")
-            with col2:
-                fy = st.selectbox("Y axis", factor_cols, index=1 if len(factor_cols) > 1 else 0, key="design_fy")
+        APP.meta = df[meta_cols].copy() if meta_cols else pd.DataFrame(index=df.index)
 
-            # (optional) Add a simple 2D plot — useful even with 3+ factors
-            #st.markdown("### 2D Projection")
-            #fig2d = px.scatter(plot_df, x=fx, y=fy, text=np.arange(1, len(plot_df) + 1),
-            #                   title=f"Design Points — {fx} vs {fy}")
-            #fig2d.update_traces(marker=dict(size=10))
-            #fig2d.update_layout(height=520)
-            #st.plotly_chart(fig2d, use_container_width=True)
+        st.divider()
+        st.subheader("Distributions (quick view)")
+        num_cols = numeric_columns(df)
+        pick = st.multiselect("Pick numeric columns to visualize", num_cols, #default=num_cols[:3]
+        )
+        figs_local = {}
+        for col in pick:
+            fig = px.histogram(df, x=col, nbins=40, title=f"Histogram: {col}")
+            st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
+            key = f"import_hist_{col}"
+            store_fig(key, fig)
+            add_download_html_button(fig, f"Download HTML: {col}", key)
+            figs_local[key] = fig
 
-            if len(factor_cols) >= 3:
-                st.markdown("### 3D Projection")
-                fz = st.selectbox("Z axis", factor_cols, index=2, key="design_fz")
-                fig3d = px.scatter_3d(plot_df, x=fx, y=fy, z=fz, text=np.arange(1, len(plot_df) + 1),
-                                      title=f"3D Design — {fx}, {fy}, {fz}")
-                fig3d.update_traces(marker=dict(size=6))
-                fig3d.update_layout(height=650)
-                st.plotly_chart(fig3d, use_container_width=True)
-
-        # Experimental Table
-        design_df = st.session_state.get("design")
-
-        if design_df is not None:
-            st.subheader("Experimental Table (Real units for the lab)")
-            st.dataframe(design_df, use_container_width=True, height=380)
-
+        if figs_local:
             st.download_button(
-                "Download Experimental Table (CSV ;)",
-                design_df.to_csv(index=False, sep=";"),
-                file_name="Experimental_Table.csv",
-                mime="text/csv",
-            )
-        else:
-            st.info("Generate a design to see the experimental table.")
-
-
-# ----------------------------------------------------------
-# STEP 2 — RESULTS (TAB 2)  [PREVIEW ONLY — NO UPLOAD HERE]
-# ----------------------------------------------------------
-with tab2:
-    st.header("STEP 2 — Results")
-
-    df = st.session_state.get("results_df")
-
-    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
-        st.info("Upload your completed CSV in the **sidebar** (Upload Results).")
-    else:
-        st.subheader("Preview uploaded data")
-        st.dataframe(df, use_container_width=True)
-
-        c1, c2 = st.columns(2)
-
-        with c1:
-            if "Results" in df.columns:
-                fig = px.histogram(df, x="Results", nbins=20, title="Results distribution")
-                st.plotly_chart(fig, use_container_width=True)
-                download_plotly_html(fig, "results_distribution.html", "Download as HTML")
-            else:
-                st.info("No 'Results' column found yet (compute it in the sidebar).")
-
-        with c2:
-            if "Results" not in df.columns:
-                st.info("No 'Results' column found yet.")
-            else:
-                resp_specs = (
-                    st.session_state.get("response_specs_mixture", [])
-                    if design_mode == "Mixture Design (Solvent Optimization)"
-                    else st.session_state.get("response_specs_classic", [])
-                )
-                candidates = [r["name"] for r in resp_specs if r.get("name") and r["name"] in df.columns]
-
-                if not candidates:
-                    st.info("No response columns detected for plotting (check response names and file columns).")
-                else:
-                    xcol = st.selectbox("X axis (response)", candidates, index=0, key="tab2_xcol")
-                    fig = px.scatter(df, x=xcol, y="Results", color="Results", title=f"{xcol} vs Results")
-                    st.plotly_chart(fig, use_container_width=True)
-                    download_plotly_html(fig, "response_vs_results.html", "Download as HTML")               
-                    
-# ----------------------------------------------------------
-# STEP 2 — RESULTS (SIDEBAR)
-# ----------------------------------------------------------
-st.sidebar.header("Upload Results")
-
-
-
-# =========================
-# Mixture path (SIDEBAR ONLY)
-# =========================
-if design_mode == "Mixture Design (Solvent Optimization)":
-    mix_df = st.session_state.get("mixture_df")
-    mix_names = st.session_state.get("mixture_names")
-
-    if mix_df is None or mix_names is None:
-        st.sidebar.info("Generate the mixture design in STEP 1 first.")
-    else:
-        uploaded = st.sidebar.file_uploader(
-            "Upload Completed CSV (separator ';' recommended)",
-            type=["csv"],
-            key="results_upload_mixture",
-        )
-
-        if uploaded is None:
-            st.session_state["results_processed_key"] = None
-            st.sidebar.info("Upload your completed mixture results CSV here.")
-        else:
-            df = _read_csv_flexible(uploaded)
-
-            # -------------------------------------------------
-            # Validate mixture columns (no return; no st.stop)
-            # -------------------------------------------------
-            mix_ready = True
-            missing_mix = [c for c in mix_names if c not in df.columns]
-            if missing_mix:
-                st.sidebar.error(
-                    "Missing mixture columns in file:\n"
-                    f"{missing_mix}\n\n"
-                    f"Your file must include the solvent fraction columns: {mix_names}"
-                )
-                mix_ready = False
-
-            # -------------------------------------------------
-            # Define responses (still allow UI, but block compute)
-            # -------------------------------------------------
-            st.sidebar.markdown("### Define Response Variables (Mixture)")
-
-            n_responses = st.sidebar.number_input(
-                "Number of response variables",
-                min_value=1,
-                max_value=5,
-                value=1,
-                step=1,
-                key="mix_n_responses",
+                "Download ALL Import plots (ZIP of HTML)",
+                data=zip_html(figs_local),
+                file_name="import_plots_html.zip",
+                mime="application/zip",
+                use_container_width=True,
             )
 
-            response_specs = []
-            for i in range(int(n_responses)):
-                rname = st.sidebar.text_input(
-                    f"Response name #{i+1}",
-                    value=f"Response_{i+1}",
-                    key=f"mix_resp_name_{i}",
-                ).strip()
+    # --- IMPORT TAB: add a RAW PCA block at the end (after the download buttons) ---
+    st.divider()
+    st.subheader("Optional (Raw PCA)",
+        help="Be carefull! This is only a general view.")
+    with st.expander("Raw PCA (no normalization / no scaling)", expanded=False):
 
-                goal = st.sidebar.selectbox(
-                    f"Goal #{i+1}",
-                    ["Maximize", "Minimize"],
-                    key=f"mix_resp_goal_{i}",
+        if APP.X_cols and APP.raw is not None:
+            df = APP.raw.copy()
+
+            X_raw_df = df[APP.X_cols].apply(pd.to_numeric, errors="coerce")
+
+            # --- NEW: minimal imputation for PCA feasibility ---
+            miss_pct = float(X_raw_df.isna().mean().mean() * 100)
+            st.caption(f"Raw PCA: overall missingness ~ {miss_pct:.1f}%")
+
+            # Drop features that are *mostly* missing (optional but helpful)
+            col_miss = X_raw_df.isna().mean()
+            keep_cols = col_miss[col_miss <= 0.95].index.tolist()  # keep cols with <=95% missing
+            X_raw_df = X_raw_df[keep_cols]
+
+            # Impute remaining NaNs (median per feature) -> still "raw" scale
+            imp = SimpleImputer(strategy="median")
+            X_raw_imp = imp.fit_transform(X_raw_df.values)
+
+            if X_raw_imp.shape[0] < 3 or X_raw_imp.shape[1] < 2:
+                st.warning("Not enough data for raw PCA (need >=3 samples and >=2 features).")
+            else:
+                n_comp = st.slider(
+                    "Raw PCA components",
+                    min_value=2,
+                    max_value=min(10, X_raw_imp.shape[1]),
+                    value=min(3, X_raw_imp.shape[1]),
+                    key="import_raw_pca_ncomp",
                 )
 
-                response_specs.append({"name": rname, "goal": goal})
+                pca_raw = PCA(n_components=n_comp, random_state=0)
+                scores = pca_raw.fit_transform(X_raw_imp)
 
-            required = [r["name"] for r in response_specs if r["name"]]
+                scores_df = pd.DataFrame(scores, columns=[f"PC{i+1}" for i in range(n_comp)])
 
-            if not required:
-                st.sidebar.warning("Please provide at least one response name.")
-                mix_ready = False
+                # add sample id + metadata
+                if APP.id_col and APP.id_col in df.columns:
+                    scores_df[APP.id_col] = df[APP.id_col].astype(str).values
+                if APP.color_col and APP.color_col in df.columns:
+                    scores_df[APP.color_col] = df[APP.color_col].astype(str).values
+                if APP.y_col and APP.y_col in df.columns and APP.y_col not in scores_df.columns:
+                    scores_df[APP.y_col] = df[APP.y_col].astype(str).values
 
-            missing_resp = [c for c in required if c not in df.columns]
-            if missing_resp:
-                st.sidebar.error(f"Missing response columns: {missing_resp}")
-                mix_ready = False
+                color_by = APP.color_col if (APP.color_col and APP.color_col in scores_df.columns) else None
+                hover_cols = [c for c in scores_df.columns if not c.startswith("PC")]
 
-            # -------------------------------------------------
-            # Compute Results (Mixture) only if everything is OK
-            # -------------------------------------------------
-            if mix_ready:
-                st.sidebar.markdown("### Compute Results (Mixture)")
+                pcx = st.selectbox("X axis", [f"PC{i+1}" for i in range(n_comp)], index=0, key="import_raw_pca_x")
+                pcy = st.selectbox("Y axis", [f"PC{i+1}" for i in range(n_comp)], index=1, key="import_raw_pca_y")
 
-                score = np.zeros(len(df), dtype=float)
+                fig_raw_scores = px.scatter(
+                    scores_df,
+                    x=pcx,
+                    y=pcy,
+                    color=color_by,
+                    hover_data=hover_cols,
+                    title=f"RAW PCA Scores (median-imputed only): {pcx} vs {pcy}",
+                )
+                fig_raw_scores.update_layout(dragmode="zoom")
+                st.plotly_chart(fig_raw_scores, use_container_width=True, config={"displaylogo": False})
 
-                for r in response_specs:
-                    col = r["name"]
-                    values = pd.to_numeric(df[col], errors="coerce")
+                evr = pca_raw.explained_variance_ratio_ * 100.0
+                evr_df = pd.DataFrame({"PC": [f"PC{i+1}" for i in range(n_comp)], "Explained_%": evr})
+                fig_raw_evr = px.bar(evr_df, x="PC", y="Explained_%", title="RAW PCA explained variance (%)")
+                st.plotly_chart(fig_raw_evr, use_container_width=True, config={"displaylogo": False})
 
-                    if values.notna().sum() < 3:
-                        st.sidebar.error(f"Response '{col}' has too few numeric values.")
-                        mix_ready = False
-                        break
-
-                    mu = float(values.mean(skipna=True))
-                    sd = float(values.std(skipna=True))
-                    if not np.isfinite(sd) or sd == 0.0:
-                        sd = 1.0
-
-                    z = (values - mu) / sd
-                    zv = z.fillna(0.0).to_numpy(dtype=float)
-
-                    weight = st.sidebar.number_input(
-                        f"Weight for {col}",
-                        value=1.0,
-                        key=f"mix_weight_{col}",
-                    )
-
-                    score += (weight * zv) if r["goal"] == "Maximize" else (-weight * zv)
-
-                if mix_ready:
-                    df_out = df.copy()
-                    df_out["Results"] = score
-
-                    st.session_state["response_specs_mixture"] = response_specs
-                    st.session_state["results_df"] = df_out
-                    # ✅ build a stable key for this uploaded file
-                    processed_key = f"mixture::{uploaded.name}::{uploaded.size}::{response_specs}"
-
-                    # ✅ only rerun once per file (prevents infinite loop)
-                    if st.session_state.get("results_processed_key") != processed_key:
-                        st.session_state["response_specs_mixture"] = response_specs
-                        st.session_state["results_df"] = df_out
-                        st.session_state["results_processed_key"] = processed_key
-
-                        st.sidebar.success("Mixture results stored ✅ Go to STEP 2 tab to preview.")
-                        st.rerun()
-                    else:
-                        # already processed; do NOT rerun again
-                        st.session_state["response_specs_mixture"] = response_specs
-                        st.session_state["results_df"] = df_out
-                        st.sidebar.success("Mixture results already computed for this file ✅")
-            else:
-                st.sidebar.info("Fix the issues above to compute Results.")
-
-# =========================
-# Classic DoE path (your current logic)
-# =========================
-else:
-    # Guard: design must exist
-    if st.session_state.get("design") is None:
-        st.sidebar.info("Generate the design in STEP 1 first.")
-    else:
-        uploaded = st.sidebar.file_uploader(
-            "Upload Completed CSV (separator ';')",
-            type=["csv"],
-            key="results_upload",
-        )
-
-        if uploaded is None:
-            st.session_state["results_processed_key"] = None
-            st.sidebar.info("Upload your completed results CSV here.")
         else:
-            df = _read_csv_flexible(uploaded)
+            st.info("Select numeric feature columns (X) in the sidebar to run a raw PCA.")
 
-            response_specs = st.session_state.get("response_specs_classic", [])
-            required = [r["name"] for r in response_specs]
-            missing = [c for c in required if c not in df.columns]
+# -------------------------
+# 2) Preprocessing
+# -------------------------
+with tabs[1]:
+    st.header("2) Preprocessing")
 
-            if missing:
-                st.sidebar.error(f"Missing columns: {missing}")
-            else:
-                st.sidebar.markdown("### Compute Results")
-                score = np.zeros(len(df), dtype=float)
+    if APP.raw is None or APP.X_raw is None or not APP.X_cols:
+        st.info("Select numeric feature columns (X) in the sidebar.")
+    else:
+        df_full = APP.raw.copy()
+        X_df = _as_numeric_df(APP.X_raw.copy())  # samples x features (raw numeric)
 
-                for r in response_specs:
-                    values = pd.to_numeric(df[r["name"]], errors="coerce")
-                    std = float(values.std()) if float(values.std()) != 0.0 else 1.0
-                    z = (values - values.mean()) / std
+        st.subheader("Preprocessing choices")
 
-                    weight = st.sidebar.number_input(
-                        f"Weight for {r['name']}",
-                        value=1.0,
-                        key=f"weight_{r['name']}",
-                    )
+        # ---------------------------------------
+        # Controls (organized)
+        # ---------------------------------------
+        c1, c2, c3 = st.columns(3)
 
-                    zv = z.fillna(0.0).to_numpy(dtype=float)
-                    score += (weight * zv) if r["goal"] == "Maximize" else (-weight * zv)
-
-                df["Results"] = score
-                st.session_state["results_df"] = df
-                # ✅ build a stable key for this uploaded file
-                processed_key = f"classic::{uploaded.name}::{uploaded.size}::{response_specs}"
-
-                # ✅ only rerun once per file (prevents infinite loop)
-                if st.session_state.get("results_processed_key") != processed_key:
-                    st.session_state["results_df"] = df
-                    st.session_state["results_processed_key"] = processed_key
-
-                    st.sidebar.success("Results computed and stored.")
-                    st.rerun()
-                else:
-                    st.session_state["results_df"] = df
-                    st.sidebar.success("Results already computed for this file ✅")
-
-        
-
-# ----------------------------------------------------------
-# STEP 3 — MODEL & VISUALIZE
-# ----------------------------------------------------------
-with tab3:
-    # ======================================================
-    # MIXTURE MODE (Scheffé Quadratic)
-    # ======================================================
-    if design_mode == "Mixture Design (Solvent Optimization)":
-        st.header("STEP 3 — Model & Visualize (Mixture — Scheffé Quadratic)")
-
-        df_state = st.session_state.get("results_df")
-        mix_df = st.session_state.get("mixture_df")
-        mix_cols = st.session_state.get("mixture_names")
-
-        if df_state is None or not isinstance(df_state, pd.DataFrame) or df_state.empty:
-            st.info("Upload mixture results in STEP 2 (sidebar) first.")
-            st.stop()
-
-        if mix_df is None or mix_cols is None:
-            st.error("Missing mixture design. Generate the mixture design in STEP 1 first.")
-            st.stop()
-
-        if "Results" not in df_state.columns:
-            st.info("No 'Results' column yet. Compute Results in the sidebar first.")
-            st.stop()
-
-        df = df_state.copy()
-
-        # keep only rows with finite Results + finite mixture fractions
-        y = pd.to_numeric(df["Results"], errors="coerce").to_numpy(dtype=float)
-        ok = np.isfinite(y)
-        for c in mix_cols:
-            v = pd.to_numeric(df[c], errors="coerce").to_numpy(dtype=float)
-            ok = ok & np.isfinite(v)
-
-        if ok.sum() < max(6, 2 * len(mix_cols)):
-            st.error("Not enough valid rows to fit the mixture model.")
-            st.stop()
-
-        df_fit = df.loc[ok, :].reset_index(drop=True)
-
-        row_sum = df_fit[mix_cols].sum(axis=1)
-        bad = (row_sum - 1.0).abs() > 1e-6
-        if bad.any():
-            st.warning(f"{int(bad.sum())} row(s) have mixture fractions not summing to 1. Check your CSV.")
-
-        # --- fit Scheffé quadratic
-        X, term_names = build_scheffe_quadratic_matrix(df_fit, mix_cols)
-        coef, yhat = fit_lstsq(X, df_fit["Results"].to_numpy(dtype=float))
-        r2v = r2_score(df_fit["Results"].to_numpy(dtype=float), yhat)
-
-        st.subheader("Model quality")
-        c1, c2 = st.columns(2)
         with c1:
-            st.metric("R² (in-sample)", f"{r2v:.3f}")
+            impute_strategy = st.selectbox(
+                "Missing value imputation",
+                ["median", "mean", "most_frequent", "constant (0)"],
+                index=0,
+            )
+            if impute_strategy == "constant (0)":
+                imp = SimpleImputer(strategy="constant", fill_value=0.0)
+            else:
+                imp = SimpleImputer(strategy=impute_strategy)
+
+            missing_col_thresh = st.slider(
+                "Drop features with missing % above",
+                0, 100, 90,
+                help="If a feature has too many missing values, you can drop it.",
+            )
+
         with c2:
-            st.caption("Mixture model: linear + pairwise interaction terms (Scheffé quadratic).")
+            sample_norm = st.selectbox(
+                "Sample normalization",
+                [
+                    "None",
+                    "Sample-specific normalization (factor)",
+                    "Normalization by sum",
+                    "Normalization by median",
+                    "Normalization by a reference sample (PQN)",
+                    "Normalization by a pooled sample from group (group PQN)",
+                    "Normalization by reference feature",
+                    "Quantile normalization",
+                ],
+                index=0,
+            )
 
-        st.subheader("Observed vs Predicted")
-        ovp = pd.DataFrame({"Observed": df_fit["Results"].to_numpy(dtype=float), "Predicted": yhat})
-        fig_ovp = px.scatter(
-            ovp, x="Observed", y="Predicted", trendline="ols",
-            title="Observed vs Predicted (Mixture)"
-        )
-        st.plotly_chart(fig_ovp, use_container_width=True)
-        download_plotly_html(fig_ovp, "mixture_observed_vs_predicted.html", "Download as HTML")
+            transform = st.selectbox(
+                "Data transformation",
+                [
+                    "None",
+                    "Log transformation (base 10)",
+                    "Log transformation (base 2)",
+                    "Square root transformation",
+                    "Cube root transformation",
+                    "Variance stabilizing normalization (VSN)",
+                ],
+                index=0,
+            )
 
-        st.subheader("Coefficient magnitudes (Pareto-like view)")
-        coef_df = pd.DataFrame({"Term": term_names, "Coefficient": coef})
-        coef_df["Abs"] = coef_df["Coefficient"].abs()
-        coef_df = coef_df.sort_values("Abs", ascending=False).reset_index(drop=True)
-        fig_coef = px.bar(
-            coef_df.head(20), x="Term", y="Abs",
-            title="Top coefficient magnitudes (|coef|) — Mixture"
-        )
-        st.plotly_chart(fig_coef, use_container_width=True)
-        download_plotly_html(fig_coef, "mixture_coefficients_pareto.html", "Download as HTML")
+        with c3:
+            alignment = st.selectbox(
+                "Alignment / batch correction",
+                [
+                    "None",
+                    "Center within batch (subtract batch mean)",
+                    "Center within batch (subtract batch median)",
+                ],
+                index=0,
+                help="Optional. Requires a batch column in your table (metadata column in APP.raw).",
+            )
+
+            scaling = st.selectbox(
+                "Scaling (feature-wise)",
+                ["none", "standard (z-score)"],
+                index=1,
+                help="Typical for PCA / many models.",
+            )
+            scaler = None if scaling == "none" else StandardScaler(with_mean=True, with_std=True)
+
+            drop_zero_var = st.checkbox("Drop zero-variance features", value=True)
 
         st.divider()
-        st.subheader("Mixture space visualization (predicted)")
+        st.subheader("Extra parameters (only when needed)")
 
-        # use the same lattice points you generated in Step 1 for visualization
-        grid_df = mix_df[mix_cols].copy()
-        Zp = []
-        for _, row in grid_df.iterrows():
-            pt = {c: float(row[c]) for c in mix_cols}
-            Zp.append(predict_scheffe_quadratic(pt, coef, mix_cols))
-        grid_df["Predicted"] = np.array(Zp, dtype=float)
+        # Identify metadata candidates in APP.raw (anything not in X_cols)
+        meta_candidates = [c for c in df_full.columns if c not in (APP.X_cols or [])]
 
-        n = len(mix_cols)
-
-        if n == 2:
-            fig = px.line(
-                grid_df.sort_values(mix_cols[0]),
-                x=mix_cols[0], y="Predicted",
-                title="Predicted response across binary mixture"
+        # sample-specific factor column (weight/volume/etc.)
+        factor_col = None
+        if sample_norm == "Sample-specific normalization (factor)":
+            num_meta = [c for c in meta_candidates if pd.api.types.is_numeric_dtype(df_full[c])]
+            factor_col = st.selectbox(
+                "Factor column (numeric, same rows as samples)",
+                options=["(select)"] + num_meta,
+                index=0,
+                help="Example: sample weight, dilution factor, volume, biomass, etc.",
             )
-            st.plotly_chart(fig, use_container_width=True)
-            download_plotly_html(fig, "mixture_predicted_binary.html", "Download as HTML")
+            if factor_col == "(select)":
+                factor_col = None
 
-        elif n == 3:
-            # --- map ternary -> XY
-            xs, ys = [], []
-            for _, r in grid_df.iterrows():
-                a = float(r[mix_cols[0]])
-                b = float(r[mix_cols[1]])
-                c = float(r[mix_cols[2]])
-                x, y = ternary_to_xy(a, b, c)
-                xs.append(x)
-                ys.append(y)
-
-            xs = np.asarray(xs, dtype=float)
-            ys = np.asarray(ys, dtype=float)
-            zs = grid_df["Predicted"].to_numpy(dtype=float)
-
-            # --- triangulation (INTEGER indices)
-            pts2 = np.column_stack([xs, ys])
-            tri = Delaunay(pts2)
-            simplices = tri.simplices.astype(int)
-
-            st.markdown("### 3D Response Surface (Ternary)")
-            fig3d = ff.create_trisurf(
-                x=xs, y=ys, z=zs,
-                simplices=simplices,
-                title="Predicted response surface (ternary mixture)",
-                show_colorbar=True,
-            )
-            fig3d.update_layout(
-                scene=dict(
-                    xaxis_title=mix_cols[1],
-                    yaxis_title=mix_cols[2],
-                    zaxis_title="Predicted",
-                ),
-                height=720,
-                margin=dict(l=0, r=0, t=50, b=0),
-            )
-            st.plotly_chart(fig3d, use_container_width=True)
-            download_plotly_html(fig3d, "mixture_surface3D_ternary.html", "Download 3D Surface as HTML")
-
-            st.markdown("### 2D Contour (on ternary triangle)")
-            fig2d = go.Figure()
-            fig2d.add_trace(
-                go.Scatter(
-                    x=xs, y=ys,
-                    mode="markers",
-                    marker=dict(size=8, color=zs, colorscale="Viridis", showscale=True),
-                    text=[
-                        f"{mix_cols[0]}={grid_df.iloc[i][mix_cols[0]]:.3f}<br>"
-                        f"{mix_cols[1]}={grid_df.iloc[i][mix_cols[1]]:.3f}<br>"
-                        f"{mix_cols[2]}={grid_df.iloc[i][mix_cols[2]]:.3f}<br>"
-                        f"Pred={zs[i]:.4f}"
-                        for i in range(len(grid_df))
-                    ],
-                    hoverinfo="text",
-                    name="Grid points",
+        # PQN reference sample selection
+        ref_sample_id = None
+        if sample_norm == "Normalization by a reference sample (PQN)":
+            if APP.id_col and APP.id_col in df_full.columns:
+                ref_sample_id = st.selectbox(
+                    "Reference sample (for PQN)",
+                    options=df_full[APP.id_col].astype(str).tolist(),
+                    index=0,
                 )
+            else:
+                st.warning("PQN needs SampleID available (APP.id_col). Add/keep SampleID in your mapped data.")
+
+        # group PQN requires y / class column
+        group_labels = None
+        if sample_norm == "Normalization by a pooled sample from group (group PQN)":
+            if APP.y_col and APP.y_col in df_full.columns:
+                group_labels = df_full[APP.y_col].astype(str)
+            else:
+                st.warning("Group PQN requires a group/class column (APP.y_col).")
+
+        # reference feature normalization
+        ref_feature = None
+        if sample_norm == "Normalization by reference feature":
+            ref_feature = st.selectbox(
+                "Reference feature (divide each sample by this feature)",
+                options=["(select)"] + (APP.X_cols or []),
+                index=0,
             )
+            if ref_feature == "(select)":
+                ref_feature = None
 
-            # draw triangle boundary
-            A = (0.0, 0.0)
-            B = (1.0, 0.0)
-            C = (0.5, math.sqrt(3) / 2.0)
-            fig2d.add_trace(
-                go.Scatter(
-                    x=[A[0], B[0], C[0], A[0]],
-                    y=[A[1], B[1], C[1], A[1]],
-                    mode="lines",
-                    line=dict(width=2),
-                    hoverinfo="skip",
-                    showlegend=False,
-                )
+        # alignment requires batch column
+        batch_series = None
+        if alignment != "None":
+            batch_col = st.selectbox(
+                "Batch column (metadata)",
+                options=["(select)"] + meta_candidates,
+                index=0,
+                help="Example: Batch, Plate, RunDay, InjectionBlock, etc.",
             )
+            if batch_col != "(select)":
+                batch_series = df_full[batch_col]
+            else:
+                st.warning("Alignment selected but no batch column chosen. Alignment will be skipped.")
+                batch_series = None
+                alignment = "None"
 
-            fig2d.update_layout(
-                title="Predicted response (ternary) — point-colored map",
-                xaxis_title="(B + 0.5·C)",
-                yaxis_title="(√3/2 · C)",
-                height=620,
-            )
-            fig2d.update_yaxes(scaleanchor="x", scaleratio=1)
-            st.plotly_chart(fig2d, use_container_width=True)
-            download_plotly_html(fig2d, "mixture_contour2D_ternary.html", "Download 2D Map as HTML")
+        # ---------------------------------------
+        # Apply preprocessing in a transparent order
+        # ---------------------------------------
+        if "preprocess_ran" not in st.session_state:
+            st.session_state["preprocess_ran"] = False
 
-        # IMPORTANT: do not fall through to Classic DoE
-        st.stop()
+        run = st.button("Run preprocessing", type="primary", key="run_preprocess")
+        already_done = (APP.X_proc is not None) and (APP.feature_names is not None)
 
-    # ======================================================
-    # CLASSIC DOE MODE (Quadratic)
-    # ======================================================
-    st.header("STEP 3 — Model & Visualize (Quadratic)")
+        if run:
+            st.session_state["preprocess_ran"] = True
 
-    df_state = st.session_state.get("results_df")
-    coded_df = st.session_state.get("coded")
-    factor_specs = st.session_state.get("factor_specs", [])
-
-    if df_state is None or not isinstance(df_state, pd.DataFrame) or df_state.empty:
-        st.info("Upload results in STEP 2 (sidebar) first.")
-        st.stop()
-
-    if coded_df is None or len(factor_specs) == 0:
-        st.error("Missing design metadata. Generate a design in STEP 1 first.")
-        st.stop()
-
-    if "Results" not in df_state.columns:
-        st.info("No 'Results' column yet. Compute Results in the sidebar first.")
-        st.stop()
-
-    df = df_state.copy()
-    coded_df = coded_df.copy()
-
-    factor_cols = [f["name"] for f in factor_specs]
-
-    if len(df) != len(coded_df):
-        st.warning(
-            "Uploaded table row count differs from the coded design. "
-            "Fitting will use matching first N rows."
-        )
-        n = min(len(df), len(coded_df))
-        df = df.iloc[:n].reset_index(drop=True)
-        coded_df = coded_df.iloc[:n].reset_index(drop=True)
-
-    y = pd.to_numeric(df["Results"], errors="coerce").to_numpy(dtype=float)
-    ok = np.isfinite(y)
-
-    if ok.sum() < max(8, 2 * len(factor_cols)):
-        st.error("Not enough valid Results values to fit a quadratic model.")
-        st.stop()
-
-    df_fit = df.loc[ok].reset_index(drop=True)
-    coded_fit = coded_df.loc[ok].reset_index(drop=True)
-
-    X, term_names = build_quadratic_matrix(coded_fit, factor_cols)
-    coef, yhat = fit_lstsq(X, df_fit["Results"].to_numpy(dtype=float))
-    r2v = r2_score(df_fit["Results"].to_numpy(dtype=float), yhat)
-
-    st.subheader("Model quality")
-    c1, c2 = st.columns(2)
-    with c1:
-        st.metric("R² (in-sample)", f"{r2v:.3f}")
-    with c2:
-        st.caption("If R² is low: either the response is noisy or your factor ranges are too narrow/too wide.")
-
-    st.subheader("Observed vs Predicted")
-    ovp = pd.DataFrame({"Observed": df_fit["Results"].to_numpy(dtype=float), "Predicted": yhat})
-    fig = px.scatter(ovp, x="Observed", y="Predicted", trendline="ols", title="Observed vs Predicted")
-    st.plotly_chart(fig, use_container_width=True)
-    download_plotly_html(fig, "observed_vs_predicted.html", "Download as HTML")
-
-    st.subheader("Residuals (with ±1σ and ±2σ bands)")
-    resid = (ovp["Observed"] - ovp["Predicted"]).to_numpy(dtype=float)
-    pred = ovp["Predicted"].to_numpy(dtype=float)
-    sigma = float(np.std(resid, ddof=1)) if len(resid) > 1 else 0.0
-
-    order = np.argsort(pred)
-    pred_s = pred[order]
-
-    fig_res = go.Figure()
-
-    fig_res.add_trace(
-        go.Scatter(
-            x=np.concatenate([pred_s, pred_s[::-1]]),
-            y=np.concatenate([2 * sigma * np.ones_like(pred_s), (-2 * sigma) * np.ones_like(pred_s)[::-1]]),
-            fill="toself",
-            name="±2σ band",
-            hoverinfo="skip",
-            line=dict(width=0),
-            opacity=0.18,
-            showlegend=True,
-        )
-    )
-    fig_res.add_trace(
-        go.Scatter(
-            x=np.concatenate([pred_s, pred_s[::-1]]),
-            y=np.concatenate([1 * sigma * np.ones_like(pred_s), (-1 * sigma) * np.ones_like(pred_s)[::-1]]),
-            fill="toself",
-            name="±1σ band",
-            hoverinfo="skip",
-            line=dict(width=0),
-            opacity=0.28,
-            showlegend=True,
-        )
-    )
-
-    for yline, nm in [(0.0, "0"), (sigma, "+1σ"), (-sigma, "-1σ"), (2 * sigma, "+2σ"), (-2 * sigma, "-2σ")]:
-        fig_res.add_trace(
-            go.Scatter(
-                x=[pred_s.min(), pred_s.max()],
-                y=[yline, yline],
-                mode="lines",
-                name=nm,
-                hoverinfo="skip",
-                line=dict(dash="dash", width=1),
-                showlegend=(nm in ["0", "+1σ", "+2σ"]),
-            )
-        )
-
-    fig_res.add_trace(
-        go.Scatter(
-            x=pred,
-            y=resid,
-            mode="markers",
-            name="Residuals",
-            marker=dict(size=8),
-        )
-    )
-
-    fig_res.update_layout(
-        title="Residuals vs Predicted (shaded ±1σ and ±2σ)",
-        xaxis_title="Predicted",
-        yaxis_title="Residual",
-        height=520,
-    )
-
-    st.plotly_chart(fig_res, use_container_width=True)
-    download_plotly_html(fig_res, "residuals_plot.html", "Download as HTML")
-
-    st.subheader("Coefficient magnitudes (Pareto-like view)")
-    coef_df = pd.DataFrame({"Term": term_names, "Coefficient": coef})
-    coef_df["Abs"] = coef_df["Coefficient"].abs()
-    coef_df = coef_df.sort_values("Abs", ascending=False).reset_index(drop=True)
-    fig = px.bar(coef_df.head(20), x="Term", y="Abs", title="Top coefficient magnitudes (|coef|)")
-    st.plotly_chart(fig, use_container_width=True)
-    download_plotly_html(fig, "coefficients_pareto.html", "Download as HTML")
-
-    st.divider()
-    st.subheader("Response surfaces (2D contour + 3D surface)")
-
-    colA, colB, colC = st.columns([1.2, 1.2, 1.6])
-    with colA:
-        fx = st.selectbox("X factor", factor_cols, index=0)
-    with colB:
-        fy = st.selectbox("Y factor", factor_cols, index=1 if len(factor_cols) > 1 else 0)
-    with colC:
-        space = st.radio("Plot axis units", ["Coded (-1..+1)", "Real units"], horizontal=True)
-
-    fixed = {}
-    for f in factor_cols:
-        if f not in (fx, fy):
-            fixed[f] = st.slider(f"Fix {f} (coded)", -1.5, 1.5, 0.0, 0.05)
-
-    grid_n = st.slider("Surface grid resolution", 25, 90, 55)
-    gx = np.linspace(-1.5, 1.5, grid_n)
-    gy = np.linspace(-1.5, 1.5, grid_n)
-
-    Z = np.zeros((grid_n, grid_n), dtype=float)
-    for i, xv in enumerate(gx):
-        for j, yv in enumerate(gy):
-            point = {f: fixed.get(f, 0.0) for f in factor_cols}
-            point[fx] = float(xv)
-            point[fy] = float(yv)
-            Z[j, i] = predict_quadratic(point, coef, factor_cols)
-
-    if space == "Real units":
-        spec_x = next(s for s in factor_specs if s["name"] == fx)
-        spec_y = next(s for s in factor_specs if s["name"] == fy)
-        gx_plot = np.array([coded_to_real_value(v, spec_x) for v in gx], dtype=float)
-        gy_plot = np.array([coded_to_real_value(v, spec_y) for v in gy], dtype=float)
-        x_label = fx
-        y_label = fy
-    else:
-        gx_plot = gx
-        gy_plot = gy
-        x_label = f"{fx} (coded)"
-        y_label = f"{fy} (coded)"
-
-    fig2d = go.Figure(
-        data=go.Contour(x=gx_plot, y=gy_plot, z=Z, contours_coloring="heatmap", showscale=True)
-    )
-    fig2d.update_layout(
-        title=f"2D Contour — Predicted Results — {fx} vs {fy}",
-        xaxis_title=x_label,
-        yaxis_title=y_label,
-        height=560,
-    )
-    st.plotly_chart(fig2d, use_container_width=True)
-    download_plotly_html(fig2d, f"contour_{fx}_vs_{fy}.html", "Download Contour as HTML")
-
-    fig3d = go.Figure(data=[go.Surface(x=gx_plot, y=gy_plot, z=Z)])
-    fig3d.update_layout(
-        title=f"3D Surface — Predicted Results — {fx} vs {fy}",
-        scene=dict(xaxis_title=x_label, yaxis_title=y_label, zaxis_title="Predicted Results"),
-        height=700,
-        margin=dict(l=0, r=0, t=50, b=0),
-    )
-    st.plotly_chart(fig3d, use_container_width=True)
-    download_plotly_html(fig3d, f"surface3D_{fx}_vs_{fy}.html", "Download 3D Surface as HTML")
-
-    st.divider()
-    st.subheader("Optimization (grid search in coded space)")
-    search_min, search_max = st.slider("Coded search range", -2.0, 2.0, (-1.0, 1.0), 0.1)
-    step = st.slider("Grid step (smaller = slower)", 0.02, 0.3, 0.08, 0.01)
-
-    if st.button("Find best conditions", type="primary"):
-        grid = np.arange(search_min, search_max + 1e-9, step)
-        total = int(len(grid) ** len(factor_cols))
-        if total > 2_000_000:
-            st.error(
-                f"Grid search too large: {total:,} evaluations. "
-                "Increase step, reduce range, or reduce number of factors."
-            )
+        # Stop only if we have NOTHING yet and the user didn't click Run
+        if (not run) and (not already_done):
+            st.info("Adjust settings, then click **Run preprocessing**.")
             st.stop()
 
-        best_val = -np.inf
-        best_point = None
+        recompute = run
 
-        for point_tuple in itertools.product(grid, repeat=len(factor_cols)):
-            point = {factor_cols[i]: float(point_tuple[i]) for i in range(len(factor_cols))}
-            val = predict_quadratic(point, coef, factor_cols)
-            if val > best_val:
-                best_val = val
-                best_point = point
+        if not recompute:
+            st.success(
+                f"Using stored preprocessing result: {APP.X_proc.shape[0]} samples × {APP.X_proc.shape[1]} features"
+            )
+        else:
+            # 0) Drop high-missing features (based on raw numeric)
+            miss_pct = X_df.isna().mean() * 100.0
+            keep_cols = miss_pct[miss_pct <= missing_col_thresh].index.tolist()
+            dropped_missing = [c for c in X_df.columns if c not in keep_cols]
+            X_df2 = X_df[keep_cols].copy()
 
-        st.success(f"Best predicted Results: {best_val:.4f}")
-        st.write("Best coded point:", best_point)
+            # 1) Impute (feature-wise, using selected strategy)
+            X_imp = imp.fit_transform(X_df2.values)
+            X_imp_df = pd.DataFrame(X_imp, index=X_df2.index, columns=X_df2.columns)
 
-        real_best = {}
-        for spec in factor_specs:
-            real_best[spec["name"]] = coded_to_real_value(best_point[spec["name"]], spec)
-        st.write("Best real conditions:", real_best)
+            # 2) Sample normalization (row-wise)
+            sample_factor = df_full[factor_col] if factor_col else None
+
+            ref_sample_series = None
+            if sample_norm == "Normalization by a reference sample (PQN)" and ref_sample_id is not None:
+                idx = df_full[APP.id_col].astype(str) == str(ref_sample_id)
+                if idx.sum() != 1:
+                    st.error("Could not uniquely identify the reference sample for PQN.")
+                    st.stop()
+                ref_sample_series = X_imp_df.loc[idx].iloc[0]
+
+            try:
+                X_norm_df = sample_normalize(
+                    X_imp_df,
+                    method=sample_norm,
+                    sample_factor=sample_factor,
+                    ref_sample=ref_sample_series,
+                    ref_feature=ref_feature,
+                    group_labels=group_labels,
+                )
+            except Exception as e:
+                st.error(f"Sample normalization failed: {e}")
+                st.stop()
+
+            # 3) Data transformation (elementwise)
+            try:
+                X_tr_df = transform_data(X_norm_df, method=transform)
+            except Exception as e:
+                st.error(f"Transformation failed: {e}")
+                st.stop()
+
+            # 4) Alignment / batch correction (optional)
+            try:
+                X_al_df = batch_align(X_tr_df, batch=batch_series, method=alignment)
+            except Exception as e:
+                st.error(f"Alignment failed: {e}")
+                st.stop()
+
+            # sanitize after norm/transform/alignment (log/division may create inf/NaN)
+            X_al_df = X_al_df.replace([np.inf, -np.inf], np.nan)
+
+            # final imputation to guarantee PCA/models never see NaN
+            final_imp = SimpleImputer(strategy="median")
+            X_al_df = pd.DataFrame(
+                final_imp.fit_transform(X_al_df),
+                index=X_al_df.index,
+                columns=X_al_df.columns,
+            )
+
+            # 5) Drop zero-variance (AFTER final imputation is safest)
+            if drop_zero_var:
+                vari = X_al_df.var(axis=0, skipna=True)
+                keep2 = vari[vari > 0].index.tolist()
+                dropped_zero = [c for c in X_al_df.columns if c not in keep2]
+                X_al_df = X_al_df[keep2]
+            else:
+                dropped_zero = []
+
+            # ✅ STORE pre-scale (no scaling yet)
+            APP.X_pre_scale = X_al_df.copy()
+
+            # 6) Scaling (feature-wise)
+            if scaler is not None:
+                X_proc = scaler.fit_transform(X_al_df.values)
+            else:
+                X_proc = X_al_df.values
+
+            # Store to app state
+            APP.X_proc = np.asarray(X_proc, dtype=float)
+            APP.feature_names = X_al_df.columns.tolist()
+
+            st.success(f"Processed X: {APP.X_proc.shape[0]} samples × {APP.X_proc.shape[1]} features")
+            if dropped_missing:
+                st.warning(f"Dropped (missingness): {len(dropped_missing)} features")
+            if dropped_zero:
+                st.warning(f"Dropped (zero variance): {len(dropped_zero)} features")
+
+        # ---------------------------------------
+        # Visualization: before vs after
+        # ---------------------------------------
+        st.divider()
+        st.subheader("Before vs After (visual checks)")
+        fast_mode = st.checkbox("Fast mode", value=True,
+                                help="Reduces plot complexity so the app stays responsive.")
+
+        MAX_SAMPLES_TRACES = 25 if fast_mode else 80
+        MAX_FEATURES_TRACES = 25 if fast_mode else 80
+        MAX_POINTS_PER_TRACE = 400 if fast_mode else 2000
+        figs_local = {}
+
+        # Matrices aligned to final feature list
+        feat_labels = APP.feature_names
+        raw_mat = _as_numeric_df(APP.X_raw.copy()).reindex(columns=feat_labels)
+        proc_mat = pd.DataFrame(APP.X_proc, index=raw_mat.index, columns=feat_labels)
+
+        if APP.X_proc.shape[1] != len(feat_labels):
+            st.error("Internal mismatch: X_proc columns do not match feature_names. Please run preprocessing again.")
+            st.stop()
+
+        # Sample labels
+        if APP.id_col and APP.id_col in df_full.columns:
+            sample_names_all = df_full[APP.id_col].astype(str).tolist()
+        else:
+            sample_names_all = [f"Sample_{i}" for i in range(raw_mat.shape[0])]
+
+        # ======================================================
+        # A) DISTRIBUTION FOR EVERY SAMPLE (across features)
+        # ======================================================
+        with st.expander("Distributions: GROUP OVERLAY (across features) — raw vs processed", expanded=False):
+            st.caption(
+                "Fast view: for each group, we pool ALL values (samples×features) and overlay distributions by group. "
+                "Use this to visually check sample-wise normalization effects without plotting each sample."
+            )
+
+            # --- need a group label column ---
+            if not (APP.y_col and APP.y_col in df_full.columns):
+                st.warning("No group column available (APP.y_col). Add/keep a class column (e.g., ATTRIBUTE_class).")
+            else:
+                group_series = df_full[APP.y_col].astype(str)
+
+                # optional: limit features for speed (but still not per-feature plotting)
+                n_feats = int(len(feat_labels))
+                if n_feats < 2:
+                    st.warning("Not enough features to plot pooled distributions.")
+                else:
+                    min_feat = 2
+                    max_feat_allowed = min(5000, n_feats)
+                    default_feat = min(800, max_feat_allowed)
+
+                    if min_feat == max_feat_allowed:
+                        max_feat = max_feat_allowed
+                        st.caption(f"Max features used: {max_feat} (only option)")
+                    else:
+                        step_feat = 20 if (max_feat_allowed - min_feat) >= 20 else 1
+                        max_feat = st.slider(
+                            "Max features used for pooled distributions (speed control)",
+                            min_value=min_feat,
+                            max_value=max_feat_allowed,
+                            value=default_feat,
+                            step=step_feat,
+                            help="This only limits how many feature columns are pooled. No individual feature plots.",
+                            key="group_overlay_maxfeat",
+                        )
+                    feat_use = feat_labels[:max_feat]
+
+                    # optional: sample cap for speed (again, pooled)
+                    n_samples = int(raw_mat.shape[0])
+                    if n_samples < 2:
+                        st.warning("Not enough samples to plot pooled distributions.")
+                    else:
+                        min_samp = 2
+                        max_samp_allowed = n_samples
+                        default_samp = min(300, max_samp_allowed)
+
+                        if min_samp == max_samp_allowed:
+                            max_samp = max_samp_allowed
+                            st.caption(f"Max samples used: {max_samp} (only option)")
+                        else:
+                            step_samp = 10 if (max_samp_allowed - min_samp) >= 10 else 1
+                            max_samp = st.slider(
+                                "Max samples used (speed control)",
+                                min_value=min_samp,
+                                max_value=max_samp_allowed,
+                                value=default_samp,
+                                step=step_samp,
+                                key="group_overlay_maxsamp",
+                            )
+
+                        idx_use = list(range(min(max_samp, n_samples)))
+
+                        # aligned matrices (subset)
+                        raw_sub = raw_mat.iloc[idx_use][feat_use]
+                        proc_sub = proc_mat.iloc[idx_use][feat_use]
+                        grp_sub = group_series.iloc[idx_use]
+
+                        # ---------- build long dataframe (pooled values) ----------
+                        raw_long = pd.DataFrame(
+                            {
+                                "value": raw_sub.to_numpy().ravel(),
+                                "group": np.repeat(grp_sub.values, len(feat_use)),
+                                "stage": "raw",
+                            }
+                        )
+                        proc_long = pd.DataFrame(
+                            {
+                                "value": proc_sub.to_numpy().ravel(),
+                                "group": np.repeat(grp_sub.values, len(feat_use)),
+                                "stage": "processed",
+                            }
+                        )
+
+                        df_long = pd.concat([raw_long, proc_long], ignore_index=True)
+                        df_long = df_long[np.isfinite(df_long["value"].values)]
+
+                        # ---------- choose plot type ----------
+                        plot_kind = st.radio(
+                            "Plot type",
+                            ["Histogram (fastest)", "Violin (still fast)"],
+                            horizontal=True,
+                            key="group_overlay_plotkind",
+                        )
+
+                        if plot_kind.startswith("Histogram"):
+                            nbins = st.slider("Bins", 20, 200, 80, key="group_overlay_bins")
+
+                            fig = px.histogram(
+                                df_long,
+                                x="value",
+                                color="group",
+                                facet_col="stage",
+                                barmode="overlay",
+                                nbins=nbins,
+                                histnorm="probability density",
+                                title="GROUP overlay distribution (pooled samples×features): RAW vs PROCESSED",
+                            )
+                            fig.update_layout(dragmode="zoom", height=520)
+                            fig.update_traces(opacity=0.45)
+                        else:
+                            fig = px.violin(
+                                df_long,
+                                x="group",
+                                y="value",
+                                color="group",
+                                facet_col="stage",
+                                box=True,
+                                points=False,
+                                title="GROUP overlay distribution (pooled samples×features): RAW vs PROCESSED",
+                            )
+                            fig.update_layout(dragmode="zoom", height=520)
+
+                        st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
+                        key = "preprocess_group_overlay_raw_vs_processed"
+                        store_fig(key, fig)
+                        add_download_html_button(fig, "Download HTML: group overlay (raw vs processed)", key)
+                        figs_local[key] = fig
+
+        # ======================================================
+        # B) DISTRIBUTION FOR EVERY FEATURE (across samples)
+        #   NOW WITH 3 STAGES:
+        #     1) RAW (as loaded; may have NaN)
+        #     2) PRE-SCALE (after impute + norm + transform + alignment + final impute; BUT BEFORE scaling)
+        #     3) PROCESSED (after scaling, if chosen)
+        # ======================================================
+        with st.expander("Distributions: EVERY FEATURE (across samples) — raw vs pre-scale vs processed", expanded=False):
+            st.caption(
+                "Each violin is one feature. Values are all samples for that feature.\n"
+                "Stages:\n"
+                "• RAW = original values\n"
+                "• PRE-SCALE = after normalization/transform/alignment (no scaling)\n"
+                "• PROCESSED = final matrix (after scaling, if enabled)"
+            )
+
+            max_feat_show = st.slider(
+                "How many features to show (violin view)",
+                min_value=5,
+                max_value=min(300, len(feat_labels)),
+                value=min(60, len(feat_labels)),
+                help="Start with 40–100 for teaching. Thousands become heavy.",
+                key="dist_features_n",
+            )
+
+            mode = st.radio(
+                "Feature selection mode",
+                ["First N features", "Choose features manually"],
+                horizontal=True,
+                key="dist_features_mode",
+            )
+
+            if mode == "First N features":
+                feat_show = feat_labels[:max_feat_show]
+            else:
+                feat_show = st.multiselect(
+                    "Pick features",
+                    options=feat_labels,
+                    default=feat_labels[: min(max_feat_show, len(feat_labels))],
+                    key="dist_features_pick",
+                )
+                if len(feat_show) > max_feat_show:
+                    feat_show = feat_show[:max_feat_show]
+                    st.info(f"Showing first {max_feat_show} of your selection (performance cap).")
+
+            # ---------- MATRICES ----------
+            # RAW (may contain NaN/inf)
+            raw_mat = _as_numeric_df(APP.X_raw.copy()).reindex(columns=feat_labels)
+            raw_mat = raw_mat.replace([np.inf, -np.inf], np.nan)
+
+            # PRE-SCALE: X_al_df is your "final non-scaled" dataframe (right before scaler.fit_transform)
+            # Ensure it exists in this scope: it is created above in your preprocessing flow.
+            if APP.X_pre_scale is None:
+                st.warning("Pre-scale matrix not found. Click 'Run preprocessing' again.")
+                st.stop()
+
+            pre_scale_mat = APP.X_pre_scale.reindex(index=raw_mat.index)
+            pre_scale_mat = pre_scale_mat.replace([np.inf, -np.inf], np.nan)
+
+            # PROCESSED (scaled if selected, else equals pre-scale numerically)
+            proc_mat = pd.DataFrame(APP.X_proc, index=raw_mat.index, columns=feat_labels)
+            proc_mat = proc_mat.replace([np.inf, -np.inf], np.nan)
+
+            # ---------- VIOLIN PLOT (each feature) ----------
+            fig = go.Figure()
+
+            # RAW (left)
+            for f in feat_show:
+                vals = raw_mat[f].values
+                vals = vals[np.isfinite(vals)]
+                fig.add_trace(
+                    go.Violin(
+                        y=vals,
+                        name=f"{f} (raw)",
+                        side="negative",
+                        width=0.9,
+                        points=False,
+                        showlegend=False,
+                        meanline_visible=True,
+                    )
+                )
+
+            # PRE-SCALE (middle overlay)
+            # Note: Plotly violin doesn't have a true "middle"; we'll overlay with smaller width and higher opacity.
+            for f in feat_show:
+                vals = pre_scale_mat[f].values
+                vals = vals[np.isfinite(vals)]
+                fig.add_trace(
+                    go.Violin(
+                        y=vals,
+                        name=f"{f} (pre-scale)",
+                        side="both",
+                        width=0.35,
+                        points=False,
+                        showlegend=False,
+                        meanline_visible=True,
+                    )
+                )
+
+            # PROCESSED (right)
+            for f in feat_show:
+                vals = proc_mat[f].values
+                vals = vals[np.isfinite(vals)]
+                fig.add_trace(
+                    go.Violin(
+                        y=vals,
+                        name=f"{f} (processed)",
+                        side="positive",
+                        width=0.9,
+                        points=False,
+                        showlegend=False,
+                        meanline_visible=True,
+                    )
+                )
+
+            fig.update_layout(
+                title="Every feature distribution (across samples): RAW (left) vs PRE-SCALE (center) vs PROCESSED (right)",
+                yaxis_title="Sample intensity (within-feature distribution)",
+                xaxis_title="Features (stacked violins)",
+                violingap=0.02,
+                violinmode="overlay",
+                height=650,
+                dragmode="zoom",
+            )
+
+            st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
+            key = "preprocess_dist_every_feature_violin_3stage"
+            store_fig(key, fig)
+            add_download_html_button(fig, "Download HTML: distributions per feature (3 stages)", key)
+            figs_local[key] = fig
+
+            # ---- RESULT distributions (global + feature-summary) ----
+            st.divider()
+            st.subheader("Resulting distributions (EVERY FEATURE)")
+
+            # 1) GLOBAL distribution of all values (flattened): RAW vs PRE-SCALE vs PROCESSED
+            raw_vals = raw_mat[feat_show].to_numpy().ravel()
+            pre_vals = pre_scale_mat[feat_show].to_numpy().ravel()
+            proc_vals = proc_mat[feat_show].to_numpy().ravel()
+
+            raw_vals = raw_vals[np.isfinite(raw_vals)]
+            pre_vals = pre_vals[np.isfinite(pre_vals)]
+            proc_vals = proc_vals[np.isfinite(proc_vals)]
+
+            df_global = pd.DataFrame(
+                {
+                    "value": np.concatenate([raw_vals, pre_vals, proc_vals]),
+                    "stage": (["raw"] * len(raw_vals)) + (["pre-scale"] * len(pre_vals)) + (["processed"] * len(proc_vals)),
+                }
+            )
+
+            fig_global = px.histogram(
+                df_global,
+                x="value",
+                color="stage",
+                barmode="overlay",
+                nbins=80,
+                histnorm="probability density",
+                title="GLOBAL distribution of all values (samples×features): RAW vs PRE-SCALE vs PROCESSED",
+            )
+            fig_global.update_layout(dragmode="zoom")
+            st.plotly_chart(fig_global, use_container_width=True, config={"displaylogo": False})
+            key = "preprocess_result_global_values_features_3stage"
+            store_fig(key, fig_global)
+            add_download_html_button(fig_global, "Download HTML: global values (3 stages)", key)
+            figs_local[key] = fig_global
+
+            # 2) Distribution across features of feature-wise summaries (3 stages)
+            def _feature_stats(mat: pd.DataFrame) -> pd.DataFrame:
+                arr = mat.to_numpy()
+                mean = np.nanmean(arr, axis=0)
+                std = np.nanstd(arr, axis=0)
+                med = np.nanmedian(arr, axis=0)
+                cv = std / np.where(np.abs(mean) < 1e-12, np.nan, np.abs(mean))
+                return pd.DataFrame({"mean": mean, "median": med, "std": std, "cv": cv})
+
+            f_raw = _feature_stats(raw_mat[feat_show]);       f_raw["stage"] = "raw"
+            f_pre = _feature_stats(pre_scale_mat[feat_show]); f_pre["stage"] = "pre-scale"
+            f_pro = _feature_stats(proc_mat[feat_show]);      f_pro["stage"] = "processed"
+
+            df_stats = pd.concat([f_raw, f_pre, f_pro], ignore_index=True).melt(
+                id_vars=["stage"], var_name="stat", value_name="value"
+            )
+
+            fig_stats = px.violin(
+                df_stats,
+                x="stat",
+                y="value",
+                color="stage",
+                box=True,
+                points=False,
+                title="Feature-wise summaries (distribution across features): RAW vs PRE-SCALE vs PROCESSED",
+            )
+            fig_stats.update_layout(dragmode="zoom")
+            st.plotly_chart(fig_stats, use_container_width=True, config={"displaylogo": False})
+            key = "preprocess_result_feature_summaries_3stage"
+            store_fig(key, fig_stats)
+            add_download_html_button(fig_stats, "Download HTML: feature summaries (3 stages)", key)
+            figs_local[key] = fig_stats
+
+        # ======================================================
+        # C) Per-feature selected histograms (RAW vs PRE-SCALE vs PROCESSED)
+        # ======================================================
+        st.subheader("Selected feature distributions (histograms)")
+
+        feat_pick = st.multiselect(
+            "Pick features to compare",
+            APP.feature_names,
+            default=APP.feature_names[: min(3, len(APP.feature_names))],
+            key="preprocess_hist_pick",
+        )
+
+        for f in feat_pick:
+            # raw (may have NaN)
+            raw_vals = pd.to_numeric(raw_mat[f], errors="coerce").values
+            raw_vals = raw_vals[np.isfinite(raw_vals)]
+
+            # pre-scale (no scaling; already cleaned/imputed)
+            pre_vals = pd.to_numeric(pre_scale_mat[f], errors="coerce").values
+            pre_vals = pre_vals[np.isfinite(pre_vals)]
+
+            # processed (final)
+            proc_vals = pd.to_numeric(proc_mat[f], errors="coerce").values
+            proc_vals = proc_vals[np.isfinite(proc_vals)]
+
+            if len(raw_vals) < 2 or len(proc_vals) < 2:
+                st.warning(f"Not enough data for feature: {f}")
+                continue
+
+            # shared binning/range so RAW doesn't disappear
+            all_vals = np.concatenate([raw_vals, pre_vals, proc_vals]) if len(pre_vals) else np.concatenate([raw_vals, proc_vals])
+            xmin, xmax = float(np.min(all_vals)), float(np.max(all_vals))
+            nbins = 50
+
+            fig = go.Figure()
+            fig.add_trace(go.Histogram(
+                x=raw_vals, name="raw", opacity=0.45,
+                nbinsx=nbins, histnorm="probability density",
+                xbins=dict(start=xmin, end=xmax),
+            ))
+            fig.add_trace(go.Histogram(
+                x=pre_vals, name="pre-scale", opacity=0.45,
+                nbinsx=nbins, histnorm="probability density",
+                xbins=dict(start=xmin, end=xmax),
+            ))
+            fig.add_trace(go.Histogram(
+                x=proc_vals, name="processed", opacity=0.45,
+                nbinsx=nbins, histnorm="probability density",
+                xbins=dict(start=xmin, end=xmax),
+            ))
+
+            fig.update_layout(
+                barmode="overlay",
+                title=f"{f}: RAW vs PRE-SCALE vs PROCESSED",
+                xaxis_title="Value",
+                yaxis_title="Density",
+                dragmode="zoom",
+                height=420,
+            )
+
+            st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
+            key = f"preprocess_hist_{f}"
+            store_fig(key, fig)
+            add_download_html_button(fig, f"Download HTML: {f}", key)
+            figs_local[key] = fig
+
+
+# -------------------------
+# 3) Exploration (PCA, correlations)
+# -------------------------
+with tabs[2]:
+    st.header("3) Exploration")
+
+    if APP.X_proc is None or APP.feature_names is None:
+        st.info("Run preprocessing first (tab 2).")
+    else:
+        X = APP.X_proc
+        max_pca = min(10, X.shape[1])
+
+        if max_pca < 2:
+            st.warning(f"Not enough features for PCA (need >=2). You currently have {X.shape[1]}.")
+            st.stop()
+        else:
+            n_comp = st.slider("PCA components", 2, max_pca, min(3, max_pca))
+
+        pca = PCA(n_components=n_comp, random_state=0)
+        scores = pca.fit_transform(X)
+
+        scores_df = pd.DataFrame(scores, columns=[f"PC{i+1}" for i in range(n_comp)])
+        scores_df["sample_index"] = np.arange(scores_df.shape[0])
+
+        # Add metadata for coloring/labels
+        meta = APP.meta.copy() if APP.meta is not None else pd.DataFrame(index=scores_df.index)
+        if meta is not None and not meta.empty:
+            meta = meta.reset_index(drop=True)
+            scores_df = pd.concat([scores_df, meta], axis=1)
+
+        color_by = APP.color_col if APP.color_col in scores_df.columns else None
+        hover_cols = [c for c in scores_df.columns if c not in [f"PC{i+1}" for i in range(n_comp)]]
+
+        c1, c2 = st.columns([2, 1])
+
+        with c1:
+            st.subheader("PCA score plot")
+            pcx = st.selectbox("X axis", [f"PC{i+1}" for i in range(n_comp)], index=0)
+            pcy = st.selectbox("Y axis", [f"PC{i+1}" for i in range(n_comp)], index=1)
+
+            fig_scores = px.scatter(
+                scores_df,
+                x=pcx,
+                y=pcy,
+                color=color_by,
+                hover_data=hover_cols,
+                title=f"PCA Scores: {pcx} vs {pcy}",
+            )
+            fig_scores.update_layout(dragmode="zoom")
+            st.plotly_chart(fig_scores, use_container_width=True, config={"displaylogo": False})
+            key = "explore_pca_scores"
+            store_fig(key, fig_scores)
+            add_download_html_button(fig_scores, "Download HTML: PCA scores", key)
+
+        with c2:
+            st.subheader("Explained variance")
+            evr = pca.explained_variance_ratio_ * 100.0
+            evr_df = pd.DataFrame({"PC": [f"PC{i+1}" for i in range(n_comp)], "Explained_%": evr})
+            fig_evr = px.bar(evr_df, x="PC", y="Explained_%", title="Explained variance (%)")
+            st.plotly_chart(fig_evr, use_container_width=True, config={"displaylogo": False})
+            key = "explore_explained_variance"
+            store_fig(key, fig_evr)
+            add_download_html_button(fig_evr, "Download HTML: explained variance", key)
+
+        st.divider()
+        st.subheader("Correlation heatmap (processed X)")
+        # Correlation on a subset if too many features
+        max_features = st.slider("Max features for correlation heatmap", 10, 200, 60)
+        rng = np.random.default_rng(0)
+        feats_all = list(APP.feature_names)
+        if len(feats_all) > max_features:
+            feats = list(rng.choice(feats_all, size=max_features, replace=False))
+        else:
+            feats = feats_all
+
+        # Build a proper DataFrame with all feature columns, then subset by name
+        X_df = pd.DataFrame(X, columns=feats_all)
+        X_sub = X_df[feats]
+        corr = X_sub.corr()
+
+        fig_corr = px.imshow(
+            corr,
+            title="Correlation heatmap (subset)",
+            aspect="auto",
+        )
+        st.plotly_chart(fig_corr, use_container_width=True, config={"displaylogo": False})
+        key = "explore_corr_heatmap"
+        store_fig(key, fig_corr)
+        add_download_html_button(fig_corr, "Download HTML: correlation heatmap", key)
+
+        st.download_button(
+            "Download ALL Exploration plots (ZIP of HTML)",
+            data=zip_html({k: v for k, v in FIGS.items() if k.startswith("explore_")}),
+            file_name="exploration_plots_html.zip",
+            mime="application/zip",
+            use_container_width=True,
+        )
+
+# -------------------------
+# 4) Modeling (LogReg + PLS-DA)
+# -------------------------
+# IMPORTANT: add this import at the top of your file:
+# from sklearn.cross_decomposition import PLSRegression
+
+with tabs[3]:
+    st.header("4) Modeling")
+
+    if APP.X_proc is None:
+        st.info("Run preprocessing first.")
+    elif APP.y_raw is None:
+        st.warning("No target y selected. Choose a categorical target column in the sidebar to model.")
+    else:
+        y_ser = APP.y_raw
+
+        # basic cleanup: drop missing y
+        mask = ~pd.isna(y_ser)
+        X = APP.X_proc[mask.values, :]
+        y = y_ser[mask].astype(str).values
+
+        # --- determine max folds allowed (useful later / consistency) ---
+        class_counts = pd.Series(y).value_counts()
+        min_class_n = int(class_counts.min())
+        if min_class_n < 2:
+            st.error(
+                f"Not enough samples per class for supervised modeling. "
+                f"Counts: {class_counts.to_dict()} "
+                f"(each class needs at least 2 samples)."
+            )
+            st.stop()
+        max_allowed_folds = min(10, min_class_n)
+        st.caption(f"Class counts: {class_counts.to_dict()} | max folds allowed: {max_allowed_folds}")
+
+        feats = APP.feature_names
+
+        # -------------------------
+        # Model selector
+        # -------------------------
+        model_kind = st.selectbox(
+            "Choose supervised model",
+            ["Logistic Regression (baseline)", "PLS-DA (PLS regression on one-hot y)"],
+            index=1,
+        )
+
+        figs_local = {}
+
+        # =====================================================================
+        # A) Logistic Regression (baseline)
+        # =====================================================================
+        if model_kind.startswith("Logistic"):
+            st.subheader("Logistic Regression (baseline classifier)")
+
+            c1, c2 = st.columns(2)
+            with c1:
+                C = st.slider("Inverse regularization (C)", 0.01, 10.0, 1.0, key="logreg_C")
+            with c2:
+                max_iter = st.slider("max_iter", 100, 5000, 1000, step=100, key="logreg_maxiter")
+
+            model = LogisticRegression(
+                C=C,
+                max_iter=max_iter,
+                solver="lbfgs",
+                multi_class="auto",
+            )
+
+            model.fit(X, y)
+
+            st.write("Classes:", list(model.classes_))
+            st.write("n_samples:", X.shape[0], " | n_features:", X.shape[1])
+
+            st.divider()
+            st.subheader("Coefficients (feature importance proxy)")
+            coef = model.coef_
+
+            if coef.shape[0] == 1:
+                df_coef = pd.DataFrame({"feature": feats, "coef": coef[0]}).sort_values("coef", ascending=False)
+                topn = st.slider("Top N", 5, min(50, len(feats)), 20, key="logreg_topn_bin")
+                df_show = pd.concat([df_coef.head(topn), df_coef.tail(topn)], axis=0)
+                fig_coef = px.bar(df_show, x="coef", y="feature", orientation="h", title="Top + Bottom coefficients")
+                st.plotly_chart(fig_coef, use_container_width=True, config={"displaylogo": False})
+                key = "model_logreg_coefficients"
+                store_fig(key, fig_coef)
+                add_download_html_button(fig_coef, "Download HTML: coefficients", key)
+                figs_local[key] = fig_coef
+            else:
+                strength = np.linalg.norm(coef, axis=0)
+                df_coef = pd.DataFrame({"feature": feats, "strength": strength}).sort_values("strength", ascending=False)
+                topn = st.slider("Top N", 5, min(50, len(feats)), 30, key="logreg_topn_multi")
+                df_show = df_coef.head(topn)
+                fig_coef = px.bar(
+                    df_show,
+                    x="strength",
+                    y="feature",
+                    orientation="h",
+                    title="Feature strength (L2 norm across classes)",
+                )
+                st.plotly_chart(fig_coef, use_container_width=True, config={"displaylogo": False})
+                key = "model_logreg_feature_strength"
+                store_fig(key, fig_coef)
+                add_download_html_button(fig_coef, "Download HTML: feature strength", key)
+                figs_local[key] = fig_coef
+
+        # =====================================================================
+        # B) PLS-DA (PLSRegression on one-hot y)
+        # =====================================================================
+        else:
+            st.subheader("PLS-DA")
+
+            st.info(
+                "PLS-DA is implemented as PLS regression where **y is one-hot encoded**. "
+                "Scores = latent variables; Loadings = variable contributions. "
+                "Validation (CV / permutation) should be done in the Validation tab."
+            )
+
+            classes = sorted(pd.unique(y).tolist())
+            y_cat = pd.Categorical(y, categories=classes)
+            Y = pd.get_dummies(y_cat).values  # (n_samples x n_classes)
+
+            max_comp = min(10, X.shape[1], X.shape[0] - 1)
+            if max_comp < 2:
+                st.warning(f"PLS-DA needs at least 2 components possible, but max_comp={max_comp}. "
+                           f"(Check if you have too few samples/features after preprocessing.)")
+                st.stop()  # <-- THIS st.stop IS OK HERE (top-level tab), not inside an expander
+            else:
+                n_comp = st.slider(
+                    "PLS-DA components",
+                    min_value=2,
+                    max_value=max_comp,
+                    value=2,
+                    key="plsda_ncomp",
+                    help="Limited by n_samples and n_features.",
+                )
+
+            # Fit PLS
+            from sklearn.cross_decomposition import PLSRegression
+            pls = PLSRegression(n_components=n_comp)
+            pls.fit(X, Y)
+
+            # Scores (T): sample coordinates in LV space
+            T = pls.x_scores_  # shape (n_samples, n_comp)
+
+            scores_df = pd.DataFrame(T, columns=[f"LV{i+1}" for i in range(n_comp)])
+            scores_df["class"] = y
+
+            # Add SampleID if available (nice for hover)
+            if APP.raw is not None and APP.id_col and APP.id_col in APP.raw.columns:
+                # Align indices: use same mask used above
+                sample_ids = APP.raw.loc[mask.values, APP.id_col].astype(str).values
+                scores_df[APP.id_col] = sample_ids
+
+            hover_cols = [c for c in scores_df.columns if c not in [f"LV{i+1}" for i in range(n_comp)]]
+
+            c1, c2 = st.columns([2, 1])
+
+            with c1:
+                lvx = st.selectbox("X axis", [f"LV{i+1}" for i in range(n_comp)], index=0, key="plsda_lvx")
+                lvy = st.selectbox("Y axis", [f"LV{i+1}" for i in range(n_comp)], index=1, key="plsda_lvy")
+
+                fig_pls_scores = px.scatter(
+                    scores_df,
+                    x=lvx,
+                    y=lvy,
+                    color="class",
+                    hover_data=hover_cols,
+                    title=f"PLS-DA Scores: {lvx} vs {lvy}",
+                )
+                fig_pls_scores.update_layout(dragmode="zoom")
+                st.plotly_chart(fig_pls_scores, use_container_width=True, config={"displaylogo": False})
+
+                key = "model_plsda_scores"
+                store_fig(key, fig_pls_scores)
+                add_download_html_button(fig_pls_scores, "Download HTML: PLS-DA scores", key)
+                figs_local[key] = fig_pls_scores
+
+            with c2:
+                # Simple proxy: fraction of X variance captured per component
+                # (PLS doesn't expose "explained variance" exactly like PCA; this is didactic)
+                X_hat = pls.x_scores_ @ pls.x_loadings_.T
+                ss_total = np.sum(X ** 2)
+                ss_res = np.sum((X - X_hat) ** 2)
+                r2x = 1.0 - (ss_res / ss_total) if ss_total > 0 else np.nan
+                st.metric("R²X (overall, approx.)", f"{r2x:.3f}" if np.isfinite(r2x) else "NA")
+
+                # Also show class distribution for context
+                st.write("Classes:", classes)
+
+                # -----------------------------
+                # Q² (cross-validated predictive ability)
+                # -----------------------------
+
+                st.subheader("Cross-validated Q²")
+
+                # CV parameters
+                cv_folds = st.slider(
+                    "Folds for Q²",
+                    min_value=2,
+                    max_value=max_allowed_folds,
+                    value=min(5, max_allowed_folds),
+                    key="plsda_q2_folds",
+                )
+
+                cv_repeats = st.slider(
+                    "Repeats for Q²",
+                    min_value=1,
+                    max_value=20,
+                    value=3,
+                    key="plsda_q2_repeats",
+                )
+
+                seed = st.number_input("Random seed (Q²)", value=0, step=1, key="plsda_q2_seed")
+
+                from sklearn.model_selection import StratifiedKFold
+
+                Y_true_all = []
+                Y_pred_all = []
+
+                for r in range(cv_repeats):
+                    cv = StratifiedKFold(
+                        n_splits=cv_folds,
+                        shuffle=True,
+                        random_state=int(seed) + r
+                    )
+
+                    for train_idx, test_idx in cv.split(X, y):
+                        pls_cv = PLSRegression(n_components=n_comp)
+                        pls_cv.fit(X[train_idx], Y[train_idx])
+
+                        Y_pred = pls_cv.predict(X[test_idx])
+
+                        Y_true_all.append(Y[test_idx])
+                        Y_pred_all.append(Y_pred)
+
+                Y_true_all = np.vstack(Y_true_all)
+                Y_pred_all = np.vstack(Y_pred_all)
+
+                # Compute Q²
+                PRESS = np.sum((Y_true_all - Y_pred_all) ** 2)
+                TSS = np.sum((Y_true_all - np.mean(Y_true_all, axis=0)) ** 2)
+
+                Q2 = 1.0 - PRESS / TSS if TSS > 0 else np.nan
+
+                st.metric("Q² (cross-validated)", f"{Q2:.3f}")
+
+            st.divider()
+            st.subheader("PLS-DA Loadings (which variables drive separation)")
+
+            # Loadings: X-loadings (P) shape (n_features, n_comp)
+            P = pls.x_loadings_
+            comp_to_show = st.selectbox(
+                "Component for loadings",
+                [f"LV{i+1}" for i in range(n_comp)],
+                index=0,
+                key="plsda_loading_comp",
+            )
+            j = int(comp_to_show.replace("LV", "")) - 1
+
+            load_df = pd.DataFrame({"feature": feats, "loading": P[:, j]})
+            load_df = load_df.sort_values("loading", ascending=False)
+
+            topn = st.slider("Top N (positive/negative)", 5, min(100, len(feats)), 30, key="plsda_topn_load")
+            load_show = pd.concat([load_df.head(topn), load_df.tail(topn)], axis=0)
+
+            fig_load = px.bar(
+                load_show,
+                x="loading",
+                y="feature",
+                orientation="h",
+                title=f"Loadings for {comp_to_show} (Top + Bottom)",
+            )
+            st.plotly_chart(fig_load, use_container_width=True, config={"displaylogo": False})
+            key = f"model_plsda_loadings_{comp_to_show}"
+            store_fig(key, fig_load)
+            add_download_html_button(fig_load, f"Download HTML: loadings {comp_to_show}", key)
+            figs_local[key] = fig_load
+
+            st.divider()
+            st.subheader("VIP scores (Variable Importance in Projection)")
+
+            # VIP calculation (standard PLS VIP)
+            # X: (n x p), T: (n x a), W: (p x a), Q: (m x a) or (a x m) depending on sklearn
+            # sklearn: x_weights_ is (p x a), y_loadings_ is (m x a)
+            W = pls.x_weights_               # (p, a)
+            Q = pls.y_loadings_              # (m, a)
+            a = n_comp
+            p = X.shape[1]
+
+            # Sum of squares explained in Y by each component:
+            # SSa = sum over responses of (t_a^2) * (q_a^2)
+            # We'll compute using T and Q columns.
+            SS = np.zeros(a)
+            for k in range(a):
+                t = T[:, k]
+                q = Q[:, k]
+                SS[k] = np.sum(t ** 2) * np.sum(q ** 2)
+
+            # VIP_j = sqrt( p * sum_k (SS_k * (w_jk^2 / ||w_k||^2)) / sum_k SS_k )
+            vip = np.zeros(p)
+            SS_sum = np.sum(SS) if np.sum(SS) > 0 else np.nan
+            for j in range(p):
+                s = 0.0
+                for k in range(a):
+                    wk = W[:, k]
+                    denom = np.sum(wk ** 2)
+                    if denom > 0:
+                        s += SS[k] * (W[j, k] ** 2 / denom)
+                vip[j] = np.sqrt(p * s / SS_sum) if np.isfinite(SS_sum) and SS_sum > 0 else np.nan
+
+            vip_df = pd.DataFrame({"feature": feats, "VIP": vip}).sort_values("VIP", ascending=False)
+            topn_vip = st.slider("Top VIP features", 5, min(100, len(feats)), 30, key="plsda_topn_vip")
+            vip_show = vip_df.head(topn_vip)
+
+            fig_vip = px.bar(vip_show, x="VIP", y="feature", orientation="h", title="Top VIP features")
+            st.plotly_chart(fig_vip, use_container_width=True, config={"displaylogo": False})
+            key = "model_plsda_vip"
+            store_fig(key, fig_vip)
+            add_download_html_button(fig_vip, "Download HTML: VIP", key)
+            figs_local[key] = fig_vip
+
+            # Optional: show a table too
+            with st.expander("Show VIP table"):
+                st.dataframe(vip_df, use_container_width=True)
+
+        # -------------------------
+        # Download all modeling plots
+        # -------------------------
+        if figs_local:
+            st.download_button(
+                "Download ALL Modeling plots (ZIP of HTML)",
+                data=zip_html(figs_local),
+                file_name="modeling_plots_html.zip",
+                mime="application/zip",
+                use_container_width=True,
+            )
+
+# -------------------------
+# 5) Validation (CV + confusion + ROC)
+# -------------------------
+with tabs[4]:
+    st.header("5) Validation")
+
+    if APP.X_proc is None:
+        st.info("Run preprocessing first.")
+    elif APP.y_raw is None:
+        st.warning("No target y selected.")
+    else:
+        # -------------------------
+        # Data
+        # -------------------------
+        y_ser = APP.y_raw
+        mask = ~pd.isna(y_ser)
+        X = APP.X_proc[mask.values, :]
+        y = y_ser[mask].astype(str).values
+
+        # Stable class order
+        classes = np.array(sorted(pd.unique(y).tolist()))
+
+        # Folds allowed by smallest class
+        class_counts = pd.Series(y).value_counts()
+        min_class_n = int(class_counts.min()) if len(class_counts) else 0
+        if min_class_n < 2:
+            st.error(f"Not enough samples per class for CV. Counts: {class_counts.to_dict()}")
+            st.stop()
+
+        max_allowed_folds = min(10, min_class_n)
+        st.caption(f"Class counts: {class_counts.to_dict()} | max folds allowed: {max_allowed_folds}")
+
+        # -------------------------
+        # CV controls
+        # -------------------------
+        st.subheader("Cross-validation")
+
+        cv_folds = st.slider(
+            "Folds",
+            min_value=2,
+            max_value=max_allowed_folds,
+            value=min(5, max_allowed_folds),
+            key="val_folds",
+            help=f"Max allowed folds: {max_allowed_folds} (min class size = {min_class_n})",
+        )
+        n_repeats = st.slider("Repeats", 1, 20, 3, key="val_repeats")
+        seed = st.number_input("Random seed", value=0, step=1, key="val_seed")
+
+        # Model controls
+        C = st.slider("C (LogReg)", 0.01, 10.0, 1.0, key="val_C")
+        max_iter = st.slider("max_iter", 100, 5000, 1000, step=100, key="val_max_iter")
+        model = LogisticRegression(C=C, max_iter=max_iter, solver="lbfgs", multi_class="auto")
+
+        # -------------------------
+        # Repeated CV predictions
+        # -------------------------
+        y_true_all: List[np.ndarray] = []
+        y_pred_all: List[np.ndarray] = []
+        y_proba_all: List[np.ndarray] = []
+
+        for r in range(int(n_repeats)):
+            cv = StratifiedKFold(
+                n_splits=int(cv_folds),
+                shuffle=True,
+                random_state=int(seed) + r,
+            )
+
+            y_pred = cross_val_predict(model, X, y, cv=cv, method="predict")
+            y_true_all.append(y)
+            y_pred_all.append(y_pred)
+
+            # Probabilities only when available
+            try:
+                y_proba = cross_val_predict(model, X, y, cv=cv, method="predict_proba")
+                y_proba_all.append(y_proba)
+            except Exception:
+                pass
+
+        y_true = np.concatenate(y_true_all)
+        y_pred = np.concatenate(y_pred_all)
+
+        acc = accuracy_score(y_true, y_pred)
+        bacc = balanced_accuracy_score(y_true, y_pred)
+        st.write(f"Accuracy: **{acc:.3f}**")
+        st.write(f"Balanced accuracy: **{bacc:.3f}**")
+
+        # -------------------------
+        # Confusion matrix
+        # -------------------------
+        st.divider()
+        st.subheader("Confusion matrix")
+
+        cm = confusion_matrix(y_true, y_pred, labels=classes)
+        cm_df = pd.DataFrame(
+            cm,
+            index=[f"true:{c}" for c in classes],
+            columns=[f"pred:{c}" for c in classes],
+        )
+        fig_cm = px.imshow(cm_df, text_auto=True, aspect="auto", title="Confusion Matrix (repeated CV)")
+        st.plotly_chart(fig_cm, use_container_width=True, config={"displaylogo": False})
+        store_fig("validation_confusion_matrix", fig_cm)
+        add_download_html_button(fig_cm, "Download HTML: confusion matrix", "validation_confusion_matrix")
+
+        # -------------------------
+        # ROC (binary only)
+        # -------------------------
+        st.divider()
+        st.subheader("ROC (binary only)")
+
+        figs_local = {"validation_confusion_matrix": fig_cm}
+
+        if len(classes) == 2 and len(y_proba_all) > 0:
+            # Stack probabilities from the repeats that actually produced them
+            proba = np.vstack(y_proba_all)
+
+            # y order from cross_val_predict is aligned to the input y each time
+            y_true_for_proba = np.tile(y, len(y_proba_all))
+
+            # Sanity check: rows must match
+            if proba.shape[0] != y_true_for_proba.shape[0]:
+                st.warning("ROC skipped: probability rows do not match y_true length.")
+            else:
+                # IMPORTANT: get the true probability-column order from the estimator
+                model_tmp = LogisticRegression(C=C, max_iter=max_iter, solver="lbfgs", multi_class="auto")
+                model_tmp.fit(X, y)
+                proba_classes = model_tmp.classes_  # column order used by predict_proba
+
+                # Guard: ensure proba columns match the estimator's class order
+                if proba.shape[1] != len(proba_classes):
+                    st.warning("ROC skipped: probability output shape does not match class list.")
+                else:
+                    pos_label = st.selectbox(
+                        "Positive class",
+                        options=list(proba_classes),
+                        index=1,
+                        key="val_pos_label",
+                    )
+                    pos_idx = int(np.where(proba_classes == pos_label)[0][0])
+
+                    y_bin = (y_true_for_proba == pos_label).astype(int)
+                    y_score = proba[:, pos_idx]
+
+                    auc = roc_auc_score(y_bin, y_score)
+                    fpr, tpr, _ = roc_curve(y_bin, y_score)
+
+                    fig_roc = go.Figure()
+                    fig_roc.add_trace(go.Scatter(x=fpr, y=tpr, mode="lines", name=f"ROC (AUC={auc:.3f})"))
+                    fig_roc.add_trace(
+                        go.Scatter(x=[0, 1], y=[0, 1], mode="lines", name="Chance", line=dict(dash="dash"))
+                    )
+                    fig_roc.update_layout(
+                        title="ROC Curve (Repeated CV)",
+                        xaxis_title="False Positive Rate",
+                        yaxis_title="True Positive Rate",
+                        dragmode="zoom",
+                    )
+
+                    st.plotly_chart(fig_roc, use_container_width=True, config={"displaylogo": False})
+                    store_fig("validation_roc", fig_roc)
+                    add_download_html_button(fig_roc, "Download HTML: ROC curve", "validation_roc")
+                    figs_local["validation_roc"] = fig_roc
+        else:
+            st.info("ROC is shown only for binary targets with probability predictions.")
+
+
+        # -------------------------
+        # Download all
+        # -------------------------
+        st.download_button(
+            "Download ALL Validation plots (ZIP of HTML)",
+            data=zip_html(figs_local),
+            file_name="validation_plots_html.zip",
+            mime="application/zip",
+            use_container_width=True,
+        )
+
+        # -------------------------
+        # Text report
+        # -------------------------
+        st.divider()
+        st.subheader("Classification report (text)")
+        st.code(classification_report(y_true, y_pred), language="text")
+
+# -------------------------
+# 6) Interpretation
+# -------------------------
+with tabs[5]:
+    st.header("6) Interpretation")
+
+    if APP.X_proc is None:
+        st.info("Run preprocessing first.")
+    else:
+        st.subheader("Interpretation is *visual* + contextual")
+        st.write(
+            """
+This tab is the place to teach:
+- What a separation/prediction means in **real terms**
+- Which variables matter **and why**
+- How to avoid overclaiming (validation + domain knowledge)
+
+For now, this starter app includes:
+- PCA explained variance + scores (Exploration tab)
+- Model coefficients / feature strength (Modeling tab)
+- Confusion matrix + ROC (Validation tab)
+
+Next upgrades for this tab (recommended):
+- Contribution plots for selected samples/groups
+- Permutation tests (PLS-DA style)
+- SHAP (tree models) or permutation importance (any model)
+- Report generator (HTML/PDF)
+"""
+        )
+
+        # Provide "download all figures so far" convenience
+        st.divider()
+        st.subheader("Download everything (all stored figures)")
+        if FIGS:
+            st.download_button(
+                "Download ALL figures from all tabs (ZIP of HTML)",
+                data=zip_html(FIGS),
+                file_name="all_figures_html.zip",
+                mime="application/zip",
+                use_container_width=True,
+            )
+        else:
+            st.info("No figures stored yet. Generate plots in previous tabs first.")
