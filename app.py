@@ -56,7 +56,6 @@ st.sidebar.divider()
 if st.sidebar.button("🧹 Clear stored figures"):
     st.session_state["figs"] = {}
     st.sidebar.success("Stored figures cleared.")
-    
 
 # -------------------------
 # Helpers
@@ -2054,4 +2053,5 @@ Next upgrades for this tab (recommended):
             )
         else:
             st.info("No figures stored yet. Generate plots in previous tabs first.")
+
 
