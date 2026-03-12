@@ -2422,7 +2422,7 @@ with tabs[5]:
             max_value=max_allowed_folds,
             value=min(5, max_allowed_folds),
             key="val_folds",
-            help=f"Max allowed folds: {max_allowed_folds} (min class size = {min_class_n})",
+            #help=f"Max allowed folds: {max_allowed_folds} (min class size = {min_class_n})",
             help=PARAM_HELP["cv_folds"],
         )
         n_repeats = st.slider("Repeats", 1, 20, 3, key="val_repeats")
