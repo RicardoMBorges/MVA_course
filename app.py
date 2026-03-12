@@ -1020,101 +1020,99 @@ A useful mental model:
         st.subheader("Preprocessing choices")
 
         # ---------------------------------------
-        # ---------------------------------------
         # Controls (organized)
         # ---------------------------------------
         c1, c2, c3 = st.columns(3)
 
         with c1:
-    impute_strategy = st.selectbox(
-        "Missing value imputation",
-        ["median", "mean", "most_frequent", "constant (0)"],
-        index=0,
-        help=PARAM_HELP["imputation"],
-    )
+            impute_strategy = st.selectbox(
+                "Missing value imputation",
+                ["median", "mean", "most_frequent", "constant (0)"],
+                index=0,
+                help=PARAM_HELP["imputation"],
+            )
 
-    if impute_strategy == "constant (0)":
-        imp = SimpleImputer(strategy="constant", fill_value=0.0)
-    else:
-        imp = SimpleImputer(strategy=impute_strategy)
+            if impute_strategy == "constant (0)":
+                imp = SimpleImputer(strategy="constant", fill_value=0.0)
+            else:
+                imp = SimpleImputer(strategy=impute_strategy)
 
-    missing_col_thresh = st.slider(
-        "Drop features with missing % above",
-        0, 100, 90,
-        help=PARAM_HELP["missing_thresh"],
-    )
+            missing_col_thresh = st.slider(
+                "Drop features with missing % above",
+                0, 100, 90,
+                help=PARAM_HELP["missing_thresh"],
+            )
 
-with c2:
-    sample_norm = st.selectbox(
-        "Sample normalization (MetaboAnalystR names)",
-        [
-            "None",
-            "QuantileNorm",
-            "GroupPQN",
-            "SamplePQN",
-            "CompNorm",
-            "SumNorm",
-            "MedianNorm",
-            "SpecNorm",
-        ],
-        index=0,
-        help=PARAM_HELP["sample_norm"],
-    )
+        with c2:
+            sample_norm = st.selectbox(
+                "Sample normalization (MetaboAnalystR names)",
+                [
+                    "None",
+                    "QuantileNorm",
+                    "GroupPQN",
+                    "SamplePQN",
+                    "CompNorm",
+                    "SumNorm",
+                    "MedianNorm",
+                    "SpecNorm",
+                ],
+                index=0,
+                help=PARAM_HELP["sample_norm"],
+            )
 
-    transform = st.selectbox(
-        "Data transformation (MetaboAnalystR names)",
-        [
-            "None",
-            "LogNorm",
-            "Log2Norm",
-            "SrNorm",
-            "CrNorm",
-            "VsnNorm",
-        ],
-        index=0,
-        help=PARAM_HELP["transform"],
-    )
+            transform = st.selectbox(
+                "Data transformation (MetaboAnalystR names)",
+                [
+                    "None",
+                    "LogNorm",
+                    "Log2Norm",
+                    "SrNorm",
+                    "CrNorm",
+                    "VsnNorm",
+                ],
+                index=0,
+                help=PARAM_HELP["transform"],
+            )
 
-with c3:
-    alignment = st.selectbox(
-        "Alignment / batch correction",
-        [
-            "None",
-            "Center within batch (subtract batch mean)",
-            "Center within batch (subtract batch median)",
-        ],
-        index=0,
-        help=PARAM_HELP["alignment"],
-    )
+        with c3:
+            alignment = st.selectbox(
+                "Alignment / batch correction",
+                [
+                    "None",
+                    "Center within batch (subtract batch mean)",
+                    "Center within batch (subtract batch median)",
+                ],
+                index=0,
+                help=PARAM_HELP["alignment"],
+            )
 
-    scaling = st.selectbox(
-        "Scaling (MetaboAnalystR names)",
-        ["None", "MeanCenter", "AutoNorm", "ParetoNorm", "RangeNorm"],
-        index=2,
-        help=PARAM_HELP["scaling"],
-    )
+            scaling = st.selectbox(
+                "Scaling (MetaboAnalystR names)",
+                ["None", "MeanCenter", "AutoNorm", "ParetoNorm", "RangeNorm"],
+                index=2,
+                help=PARAM_HELP["scaling"],
+            )
 
-    drop_zero_var = st.checkbox(
-        "Drop zero-variance features",
-        value=True,
-        help=PARAM_HELP["drop_zero_var"],
-    )
+            drop_zero_var = st.checkbox(
+                "Drop zero-variance features",
+                value=True,
+                help=PARAM_HELP["drop_zero_var"],
+            )
 
         st.divider()
         st.subheader("Extra parameters (only when needed)")
 
-        st.subheader("Extra parameters (only when needed)")
         st.caption(
-    """
-These options appear only for specific methods.
+        """
+        These options appear only for specific methods.
 
-Examples:
-- **SpecNorm** needs a sample-specific factor
-- **SamplePQN** needs a reference sample
-- **GroupPQN** needs a class/group and a reference group
-- **CompNorm** needs a reference feature
-- **Alignment** needs a batch column
-"""
+        Examples:
+        - **SpecNorm** needs a sample-specific factor
+        - **SamplePQN** needs a reference sample
+        - **GroupPQN** needs a class/group and a reference group
+        - **CompNorm** needs a reference feature
+        - **Alignment** needs a batch column
+        """
         )
 
         # Identify metadata candidates in APP.raw (anything not in X_cols)
@@ -1143,7 +1141,9 @@ Examples:
                     index=0,
                 )
             else:
-                st.warning("PQN needs SampleID available (APP.id_col). Add/keep SampleID in your mapped data.")
+                st.warning(
+                    "PQN needs SampleID available (APP.id_col). Add/keep SampleID in your mapped data."
+                )
 
         # group PQN requires y / class column
         group_labels = None
@@ -1180,6 +1180,7 @@ Examples:
                 index=0,
                 help="Example: Batch, Plate, RunDay, InjectionBlock, etc.",
             )
+
             if batch_col != "(select)":
                 batch_series = df_full[batch_col]
             else:
