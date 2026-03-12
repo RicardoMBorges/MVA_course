@@ -1018,7 +1018,7 @@ A useful mental model:
     )
     
     with st.expander("How should I choose a normalization method?", expanded=False):
-    st.markdown(
+        st.markdown(
         """
 - **None**: use when data are already comparable or for teaching contrasts
 - **SumNorm**: useful when total signal differs strongly among samples
@@ -1029,7 +1029,7 @@ A useful mental model:
 - **QuantileNorm**: forces distributions to match exactly; powerful but strong
 - **SpecNorm**: use when you have an external numeric correction factor
 """
-    )
+        )
 
     if APP.raw is None or APP.X_raw is None or not APP.X_cols:
         st.info("Select numeric feature columns (X) in the sidebar.")
