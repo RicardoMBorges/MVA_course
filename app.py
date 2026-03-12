@@ -917,6 +917,11 @@ with tabs[0]:
     st.divider()
     st.subheader("Optional (Raw PCA)",
         help="Be carefull! This is only a general view.")
+        
+    
+    with st.expander("Raw PCA (no normalization / no scaling)", expanded=False):
+        st.markdown(PARAM_HELP["raw_pca"])
+    
     with st.expander("Raw PCA (no normalization / no scaling)", expanded=False):
 
         if APP.X_cols and APP.raw is not None:
@@ -946,6 +951,7 @@ with tabs[0]:
                     max_value=min(10, X_raw_imp.shape[1]),
                     value=min(3, X_raw_imp.shape[1]),
                     key="import_raw_pca_ncomp",
+                    help=PARAM_HELP["pca_components"],
                 )
 
                 pca_raw = PCA(n_components=n_comp, random_state=0)
@@ -1495,6 +1501,8 @@ Here we do something didactic:
 - Then we show the **real PCA score plot** (after preprocessing, if available)
 """
     )
+    
+    st.info(PARAM_HELP["pre_pca_projection"])
 
     if APP.raw is None or APP.X_cols is None or APP.X_raw is None or len(APP.X_cols) < 2:
         st.info("Load data and map features first (Import tab). You need at least 2 numeric features.")
