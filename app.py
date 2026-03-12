@@ -993,6 +993,24 @@ with tabs[0]:
 with tabs[1]:
     st.header("2) Preprocessing")
 
+    st.info(
+        """
+### What happens in preprocessing?
+Preprocessing prepares the raw analytical matrix for multivariate analysis.
+
+Typical goals:
+- handle missing values
+- reduce technical bias between samples
+- stabilize variance
+- put variables on a comparable scale
+
+A useful mental model:
+- **Normalization** = makes samples more comparable
+- **Transformation** = changes distribution shape
+- **Scaling** = changes variable weighting
+"""
+    )
+
     if APP.raw is None or APP.X_raw is None or not APP.X_cols:
         st.info("Select numeric feature columns (X) in the sidebar.")
     else:
