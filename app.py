@@ -1865,7 +1865,6 @@ with tabs[4]:
                 C=C,
                 max_iter=max_iter,
                 solver="lbfgs",
-                multi_class="auto",
             )
 
             model.fit(X, y)
