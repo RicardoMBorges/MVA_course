@@ -1038,6 +1038,16 @@ A useful mental model:
         X_df = _as_numeric_df(APP.X_raw.copy())  # samples x features (raw numeric)
 
         st.subheader("Preprocessing choices")
+        
+        st.markdown(
+    """
+**Quick interpretation**
+- Imputation answers: *what do we do with missing values?*
+- Normalization answers: *how do we make samples comparable?*
+- Transformation answers: *how do we reduce skew and variance problems?*
+- Scaling answers: *how much weight should each variable have?*
+"""
+        )
 
         # ---------------------------------------
         # Controls (organized)
