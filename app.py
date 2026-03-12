@@ -1016,6 +1016,20 @@ A useful mental model:
 - **Scaling** = changes variable weighting
 """
     )
+    
+    with st.expander("How should I choose a normalization method?", expanded=False):
+    st.markdown(
+        """
+- **None**: use when data are already comparable or for teaching contrasts
+- **SumNorm**: useful when total signal differs strongly among samples
+- **MedianNorm**: similar idea, but often more robust
+- **SamplePQN**: useful when one reference sample is appropriate
+- **GroupPQN**: useful when one class/group should define the reference
+- **CompNorm**: useful when one internal standard or marker is trusted
+- **QuantileNorm**: forces distributions to match exactly; powerful but strong
+- **SpecNorm**: use when you have an external numeric correction factor
+"""
+    )
 
     if APP.raw is None or APP.X_raw is None or not APP.X_cols:
         st.info("Select numeric feature columns (X) in the sidebar.")
@@ -2322,6 +2336,8 @@ with tabs[4]:
 
             st.divider()
             st.subheader("VIP scores (Variable Importance in Projection)")
+            
+            st.caption(PARAM_HELP["vip"])
 
             # VIP calculation (standard PLS VIP)
             # X: (n x p), T: (n x a), W: (p x a), Q: (m x a) or (a x m) depending on sklearn
@@ -2425,7 +2441,7 @@ with tabs[5]:
             #help=f"Max allowed folds: {max_allowed_folds} (min class size = {min_class_n})",
             help=PARAM_HELP["cv_folds"],
         )
-        n_repeats = st.slider("Repeats", 1, 20, 3, key="val_repeats")
+        n_repeats = st.slider("Repeats", 1, 20, 3, key="val_repeats",help=PARAM_HELP["cv_repeats"])
         seed = st.number_input("Random seed", value=0, step=1, key="val_seed")
 
         # Model controls
