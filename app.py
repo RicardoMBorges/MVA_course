@@ -1103,6 +1103,20 @@ with c3:
         st.divider()
         st.subheader("Extra parameters (only when needed)")
 
+        st.subheader("Extra parameters (only when needed)")
+        st.caption(
+    """
+These options appear only for specific methods.
+
+Examples:
+- **SpecNorm** needs a sample-specific factor
+- **SamplePQN** needs a reference sample
+- **GroupPQN** needs a class/group and a reference group
+- **CompNorm** needs a reference feature
+- **Alignment** needs a batch column
+"""
+        )
+
         # Identify metadata candidates in APP.raw (anything not in X_cols)
         meta_candidates = [c for c in df_full.columns if c not in (APP.X_cols or [])]
 
