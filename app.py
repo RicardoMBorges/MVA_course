@@ -999,9 +999,9 @@ with tabs[0]:
 with tabs[1]:
     st.header("2) Preprocessing")
 
-    st.info(
+    with st.expander("What happens in preprocessing?", expanded=False):
+        st.info(
         """
-### What happens in preprocessing?
 Preprocessing prepares the raw analytical matrix for multivariate analysis.
 
 Typical goals:
@@ -1015,7 +1015,7 @@ A useful mental model:
 - **Transformation** = changes distribution shape
 - **Scaling** = changes variable weighting
 """
-    )
+        )
     
     with st.expander("How should I choose a normalization method?", expanded=False):
         st.markdown(
