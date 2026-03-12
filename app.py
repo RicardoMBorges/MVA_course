@@ -1030,6 +1030,50 @@ A useful mental model:
 - **SpecNorm**: use when you have an external numeric correction factor
 """
         )
+        ########################################
+        PARAM_HELP = {
+            "sample_norm": """
+        Sample normalization adjusts each sample relative to itself.
+        It helps reduce differences caused by dilution, biomass, or injection amount.
+        """,
+            "transform": """
+        Transformation changes the shape of the data distribution.
+        It often reduces skewness and compresses very large values.
+        """,
+            "scaling": """
+        Scaling changes the relative importance of variables.
+        It helps prevent large-amplitude variables from dominating the analysis.
+        """,
+        }
+
+        st.info(
+            """
+        This section prepares the raw data for multivariate analysis.
+        Think of it this way:
+        normalization = sample correction,
+        transformation = shape correction,
+        scaling = variable weighting.
+        """
+        )
+
+        sample_norm = st.selectbox(
+            "Sample normalization",
+            ["None", "SumNorm", "MedianNorm", "QuantileNorm"],
+            help=PARAM_HELP["sample_norm"],
+        )
+
+        transform = st.selectbox(
+            "Transformation",
+            ["None", "LogNorm", "Log2Norm", "SrNorm"],
+            help=PARAM_HELP["transform"],
+        )
+
+        scaling = st.selectbox(
+            "Scaling",
+            ["None", "MeanCenter", "AutoNorm", "ParetoNorm"],
+            help=PARAM_HELP["scaling"],
+        )
+        
 
     if APP.raw is None or APP.X_raw is None or not APP.X_cols:
         st.info("Select numeric feature columns (X) in the sidebar.")
