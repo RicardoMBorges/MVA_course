@@ -2188,7 +2188,7 @@ with tabs[5]:
         # Model controls
         C = st.slider("C (LogReg)", 0.01, 10.0, 1.0, key="val_C")
         max_iter = st.slider("max_iter", 100, 5000, 1000, step=100, key="val_max_iter")
-        model = LogisticRegression(C=C, max_iter=max_iter, solver="lbfgs", multi_class="auto")
+        model = LogisticRegression(C=C, max_iter=max_iter, solver="lbfgs")
 
         # -------------------------
         # Repeated CV predictions
@@ -2260,7 +2260,7 @@ with tabs[5]:
                 st.warning("ROC skipped: probability rows do not match y_true length.")
             else:
                 # IMPORTANT: get the true probability-column order from the estimator
-                model_tmp = LogisticRegression(C=C, max_iter=max_iter, solver="lbfgs", multi_class="auto")
+                model_tmp = LogisticRegression(C=C, max_iter=max_iter, solver="lbfgs")
                 model_tmp.fit(X, y)
                 proba_classes = model_tmp.classes_  # column order used by predict_proba
 
