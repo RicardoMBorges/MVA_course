@@ -2174,7 +2174,8 @@ with tabs[4]:
                     max_value=max_comp,
                     value=2,
                     key="plsda_ncomp",
-                    help="Limited by n_samples and n_features.",
+                    #help="Limited by n_samples and n_features.",
+                    help=PARAM_HELP["plsda_components"],
                 )
 
             # Fit PLS
@@ -2422,6 +2423,7 @@ with tabs[5]:
             value=min(5, max_allowed_folds),
             key="val_folds",
             help=f"Max allowed folds: {max_allowed_folds} (min class size = {min_class_n})",
+            help=PARAM_HELP["cv_folds"],
         )
         n_repeats = st.slider("Repeats", 1, 20, 3, key="val_repeats")
         seed = st.number_input("Random seed", value=0, step=1, key="val_seed")
