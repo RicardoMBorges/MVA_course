@@ -509,6 +509,10 @@ def batch_align(X: pd.DataFrame, batch: Optional[pd.Series], method: str) -> pd.
 
     raise ValueError(f"Unknown alignment method: {method}")
 
+def didactic_help(title: str, key: str, expanded: bool = False):
+    text = PARAM_HELP.get(key, "No help text available.")
+    with st.expander(f"Help — {title}", expanded=expanded):
+        st.markdown(text)
 
 # -------------------------
 # Didactic text helpers
@@ -1004,73 +1008,79 @@ with tabs[1]:
         c1, c2, c3 = st.columns(3)
 
         with c1:
-            impute_strategy = st.selectbox(
-                "Missing value imputation",
-                ["median", "mean", "most_frequent", "constant (0)"],
-                index=0,
-            )
-            if impute_strategy == "constant (0)":
-                imp = SimpleImputer(strategy="constant", fill_value=0.0)
-            else:
-                imp = SimpleImputer(strategy=impute_strategy)
+    impute_strategy = st.selectbox(
+        "Missing value imputation",
+        ["median", "mean", "most_frequent", "constant (0)"],
+        index=0,
+        help=PARAM_HELP["imputation"],
+    )
 
-            missing_col_thresh = st.slider(
-                "Drop features with missing % above",
-                0, 100, 90,
-                help="If a feature has too many missing values, you can drop it.",
-            )
+    if impute_strategy == "constant (0)":
+        imp = SimpleImputer(strategy="constant", fill_value=0.0)
+    else:
+        imp = SimpleImputer(strategy=impute_strategy)
 
-        with c2:
-            sample_norm = st.selectbox(
-                "Sample normalization (MetaboAnalystR names)",
-                [
-                    "None",
-                    "QuantileNorm",
-                    "GroupPQN",
-                    "SamplePQN",
-                    "CompNorm",
-                    "SumNorm",
-                    "MedianNorm",
-                    "SpecNorm",
-                ],
-                index=0,
-                help="These names mirror the MetaboAnalystR Normalization() options.",
-            )
+    missing_col_thresh = st.slider(
+        "Drop features with missing % above",
+        0, 100, 90,
+        help=PARAM_HELP["missing_thresh"],
+    )
 
-            transform = st.selectbox(
-                "Data transformation (MetaboAnalystR names)",
-                [
-                    "None",
-                    "LogNorm",
-                    "Log2Norm",
-                    "SrNorm",
-                    "CrNorm",
-                    "VsnNorm",
-                ],
-                index=0,
-                help="These names mirror the MetaboAnalystR Normalization() options.",
-            )
+with c2:
+    sample_norm = st.selectbox(
+        "Sample normalization (MetaboAnalystR names)",
+        [
+            "None",
+            "QuantileNorm",
+            "GroupPQN",
+            "SamplePQN",
+            "CompNorm",
+            "SumNorm",
+            "MedianNorm",
+            "SpecNorm",
+        ],
+        index=0,
+        help=PARAM_HELP["sample_norm"],
+    )
 
-        with c3:
-            alignment = st.selectbox(
-                "Alignment / batch correction",
-                [
-                    "None",
-                    "Center within batch (subtract batch mean)",
-                    "Center within batch (subtract batch median)",
-                ],
-                index=0,
-                help="Optional extra step for this app. This is NOT part of the exact MetaboAnalystR Normalization() pipeline.",
-            )
+    transform = st.selectbox(
+        "Data transformation (MetaboAnalystR names)",
+        [
+            "None",
+            "LogNorm",
+            "Log2Norm",
+            "SrNorm",
+            "CrNorm",
+            "VsnNorm",
+        ],
+        index=0,
+        help=PARAM_HELP["transform"],
+    )
 
-            scaling = st.selectbox(
-                "Scaling (MetaboAnalystR names)",
-                ["None", "MeanCenter", "AutoNorm", "ParetoNorm", "RangeNorm"],
-                index=2,
-                help="These formulas mirror the MetaboAnalystR scaling options.",
-            )
+with c3:
+    alignment = st.selectbox(
+        "Alignment / batch correction",
+        [
+            "None",
+            "Center within batch (subtract batch mean)",
+            "Center within batch (subtract batch median)",
+        ],
+        index=0,
+        help=PARAM_HELP["alignment"],
+    )
 
-            drop_zero_var = st.checkbox("Drop zero-variance features", value=True)
+    scaling = st.selectbox(
+        "Scaling (MetaboAnalystR names)",
+        ["None", "MeanCenter", "AutoNorm", "ParetoNorm", "RangeNorm"],
+        index=2,
+        help=PARAM_HELP["scaling"],
+    )
+
+    drop_zero_var = st.checkbox(
+        "Drop zero-variance features",
+        value=True,
+        help=PARAM_HELP["drop_zero_var"],
+    )
 
         st.divider()
         st.subheader("Extra parameters (only when needed)")
