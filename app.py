@@ -508,6 +508,197 @@ def batch_align(X: pd.DataFrame, batch: Optional[pd.Series], method: str) -> pd.
         return Xc - Xc.groupby(b).transform("median")
 
     raise ValueError(f"Unknown alignment method: {method}")
+
+
+# -------------------------
+# Didactic text helpers
+# -------------------------
+PARAM_HELP = {
+    "imputation": """
+**Missing value imputation** fills in missing values so the analysis can continue.
+
+Common options:
+- **median**: robust to outliers; often a safe default
+- **mean**: simple average; more sensitive to extreme values
+- **most_frequent**: replaces with the most common value
+- **constant (0)**: inserts zero; only appropriate when zero has real meaning
+
+Didactic note:
+Imputation does not create real information. It is only a practical strategy
+to avoid losing samples/features.
+""",
+    "missing_thresh": """
+Features with too many missing values are often unreliable.
+
+This parameter removes variables whose missing percentage is above the threshold.
+Example:
+- 90 means a feature is dropped if more than 90% of its values are missing
+
+Didactic note:
+Very sparse variables may add noise and instability.
+""",
+    "sample_norm": """
+**Sample normalization** adjusts each sample relative to itself.
+
+Why do this?
+Because different samples may differ in:
+- dilution
+- biomass
+- injection amount
+- total signal intensity
+
+Examples:
+- **SumNorm**: scales by the total signal of each sample
+- **MedianNorm**: scales by the sample median
+- **PQN**: adjusts using quotients relative to a reference
+- **CompNorm**: uses one reference variable
+- **QuantileNorm**: forces all samples to have the same distribution
+
+Didactic note:
+Normalization acts mainly at the **sample level**.
+""",
+    "transform": """
+**Transformation** changes the numerical shape of the data.
+
+Why do this?
+Because analytical data are often:
+- right-skewed
+- heteroscedastic
+- dominated by very large peaks
+
+Examples:
+- **LogNorm / Log2Norm**: compress large values
+- **SrNorm**: square-root transform; milder than log
+- **CrNorm**: cube-root transform
+
+Didactic note:
+Transformation mainly changes the **distribution shape**.
+""",
+    "alignment": """
+**Alignment / batch correction** reduces systematic shifts between batches.
+
+Use this when measurements were acquired in different:
+- days
+- plates
+- runs
+- blocks
+- batches
+
+Example:
+- subtract batch mean
+- subtract batch median
+
+Didactic note:
+This is not the same as normalization. It tries to reduce structured technical bias.
+""",
+    "scaling": """
+**Scaling** adjusts the relative importance of variables.
+
+Why do this?
+Because some features naturally have much larger variance or intensity than others.
+
+Examples:
+- **MeanCenter**: subtract the mean only
+- **AutoNorm**: mean-center and divide by standard deviation
+- **ParetoNorm**: softer than autoscaling
+- **RangeNorm**: scales by max-min range
+
+Didactic note:
+Scaling acts mainly at the **feature level**.
+""",
+    "drop_zero_var": """
+A zero-variance feature has the same value in all samples.
+
+Such features do not help:
+- PCA
+- classification
+- correlation structure
+
+So they are usually removed.
+""",
+    "raw_pca": """
+This PCA is only for quick visual inspection of the raw data.
+
+Important:
+- no normalization
+- no transformation
+- no scaling
+- minimal imputation only
+
+Didactic note:
+This can be misleading when variables have very different scales.
+""",
+    "pre_pca_projection": """
+This tab is didactic.
+
+A true PCA score plot is based on:
+- mean-centering
+- covariance structure
+- eigenvectors / loadings
+
+Here we first show arbitrary projections so students can understand
+that 'reducing to 2D' is not automatically PCA.
+""",
+    "pca_components": """
+The number of principal components to calculate.
+
+Each component captures a direction of variation in the data:
+- PC1 explains the largest variance
+- PC2 explains the next largest variance
+- and so on
+""",
+    "plsda_components": """
+The number of latent variables in PLS-DA.
+
+Too few components:
+- may underfit the class structure
+
+Too many components:
+- may overfit noise
+
+Didactic note:
+Always interpret PLS-DA together with validation.
+""",
+    "cv_folds": """
+Cross-validation splits the data into parts.
+
+Example:
+- 5 folds means the model is trained on 4 parts and tested on 1 part,
+  repeated until all parts are tested.
+
+More folds:
+- often use more training data
+- but may become unstable with very small datasets
+""",
+    "cv_repeats": """
+Repeating cross-validation with different random splits gives a more stable estimate.
+
+Didactic note:
+One single split may be lucky or unlucky.
+Repeats reduce dependence on one random partition.
+""",
+    "logreg_C": """
+**C** controls regularization strength in logistic regression.
+
+- small C -> stronger regularization
+- large C -> weaker regularization
+
+Didactic note:
+Stronger regularization helps prevent overfitting.
+""",
+    "max_iter": """
+Maximum number of optimization iterations.
+
+If the model does not converge, increasing this value may help.
+""",
+    "vip": """
+VIP = Variable Importance in Projection.
+
+In PLS-DA, VIP is often used to rank variables by overall contribution
+to the latent structure related to the response.
+""",
+}
+
 # =====================================================
 # Sidebar: Data import + column mapping (MetaboAnalyst-like)
 # =====================================================
