@@ -633,8 +633,6 @@ Didactic note:
 This can be misleading when variables have very different scales.
 """,
     "pre_pca_projection": """
-This tab is didactic.
-
 A true PCA score plot is based on:
 - mean-centering
 - covariance structure
