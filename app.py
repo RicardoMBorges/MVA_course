@@ -3099,9 +3099,10 @@ with tabs[5]:
         # ROC (binary only)
         # -------------------------
         st.divider()
+        st.subheader("ROC (binary only)")
+     
         with st.expander("Help — ROC curve and AUC", expanded=False):
             st.markdown(PARAM_HELP["validation_roc"])
-        st.subheader("ROC (binary only)")
 
         figs_local = {"validation_confusion_matrix": fig_cm}
 
