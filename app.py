@@ -825,35 +825,51 @@ def format_preprocessing_method_name(params: Optional[Dict]) -> str:
 
 
 def build_pipeline_summary(app: AppData) -> str:
-    parts = []
-    parts.append("MULTIVARIATE ANALYSIS PIPELINE\n")
+    pp = getattr(app, "preprocess_params", None) or {}
+    mp = getattr(app, "model_params", None) or {}
+    vp = getattr(app, "validation_params", None) or {}
 
-    if app.preprocess_params:
-        parts.append("PREPROCESSING")
-        parts.append(format_preprocessing_method_name(app.preprocess_params))
-        parts.append("")
+    lines = []
+    lines.append("MULTIVARIATE ANALYSIS PIPELINE")
+    lines.append("")
 
-    if app.model_params:
-        parts.append("MODELING")
-        mp = app.model_params
-        for k, v in mp.items():
-            parts.append(f"{k}: {v}")
-        parts.append("")
+    if pp:
+        lines.append("Preprocessing:")
+        lines.append(f"- Imputation: {pp.get('imputation', 'NA')}")
+        lines.append(f"- Missing-value filter: >{pp.get('missing_col_thresh', 'NA')}% removed")
+        lines.append(f"- Normalization: {pp.get('sample_norm', 'NA')}")
+        lines.append(f"- Transformation: {pp.get('transform', 'NA')}")
+        lines.append(f"- Alignment: {pp.get('alignment', 'NA')}")
+        lines.append(f"- Scaling: {pp.get('scaling', 'NA')}")
+        lines.append("")
 
-    if app.validation_params:
-        parts.append("VALIDATION")
-        vp = app.validation_params
-        for k, v in vp.items():
-            parts.append(f"{k}: {v}")
-        parts.append("")
+    if mp:
+        lines.append("Model:")
+        lines.append(f"- {mp.get('model_kind', 'NA')}")
+        if mp.get("n_components") is not None:
+            lines.append(f"- Components: {mp.get('n_components')}")
+        lines.append("")
 
-    return "\n".join(parts)
+    if vp:
+        lines.append("Validation:")
+        lines.append(f"- CV folds: {vp.get('cv_folds', 'NA')}")
+        lines.append(f"- CV repeats: {vp.get('cv_repeats', 'NA')}")
+        if vp.get("accuracy") is not None:
+            lines.append(f"- Accuracy: {vp.get('accuracy'):.3f}")
+        if vp.get("balanced_accuracy") is not None:
+            lines.append(f"- Balanced accuracy: {vp.get('balanced_accuracy'):.3f}")
+        if vp.get("roc_auc") is not None:
+            lines.append(f"- ROC AUC: {vp.get('roc_auc'):.3f}")
 
+    if len(lines) <= 2:
+        lines.append("No recorded parameters yet. Run preprocessing, modeling, and validation first.")
+
+    return "\n".join(lines)
 
 def build_methods_paragraph(app: AppData) -> str:
-    pp = app.preprocess_params or {}
-    mp = app.model_params or {}
-    vp = app.validation_params or {}
+    pp = getattr(app, "preprocess_params", None) or {}
+    mp = getattr(app, "model_params", None) or {}
+    vp = getattr(app, "validation_params", None) or {}
 
     imputation = pp.get("imputation", "not specified")
     miss = pp.get("missing_col_thresh", "not specified")
@@ -880,7 +896,7 @@ def build_methods_paragraph(app: AppData) -> str:
             f"with {cv_repeats} repeat(s)."
         )
 
-    text = (
+    return (
         f"Data preprocessing and multivariate analysis were performed using the Streamlit-based "
         f"Multivariate Data Analysis Course application implemented in Python. "
         f"Features with more than {miss}% missing values were removed, and missing values were imputed using {imputation}. "
@@ -892,32 +908,43 @@ def build_methods_paragraph(app: AppData) -> str:
 
 
 def build_detailed_report(app: AppData) -> str:
+    pp = getattr(app, "preprocess_params", None) or {}
+    mp = getattr(app, "model_params", None) or {}
+    vp = getattr(app, "validation_params", None) or {}
+
     lines = []
     lines.append("DETAILED ANALYSIS REPORT")
     lines.append("")
 
     lines.append("PREPROCESSING PARAMETERS")
-    if app.preprocess_params:
-        for k, v in app.preprocess_params.items():
+    if pp:
+        for k, v in pp.items():
             lines.append(f"- {k}: {v}")
     else:
         lines.append("- Not available")
 
     lines.append("")
     lines.append("MODELING PARAMETERS")
-    if app.model_params:
-        for k, v in app.model_params.items():
+    if mp:
+        for k, v in mp.items():
             lines.append(f"- {k}: {v}")
     else:
         lines.append("- Not available")
 
     lines.append("")
     lines.append("VALIDATION PARAMETERS")
-    if app.validation_params:
-        for k, v in app.validation_params.items():
+    if vp:
+        for k, v in vp.items():
             lines.append(f"- {k}: {v}")
     else:
         lines.append("- Not available")
+
+    lines.append("")
+    lines.append("SOFTWARE / NOTES")
+    lines.append("- Interface: Streamlit")
+    lines.append("- Core numerical environment: Python")
+    lines.append("- PCA / Logistic Regression / PLSRegression: scikit-learn")
+    lines.append("- Results depend on the selected preprocessing and validation settings")
 
     return "\n".join(lines)
 
