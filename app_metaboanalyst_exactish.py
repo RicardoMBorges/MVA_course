@@ -659,18 +659,16 @@ with tabs[0]:
         st.info("Upload a dataset in the sidebar to begin.")
     else:
         df = APP.raw
+        st.subheader("Preview")
+        st.dataframe(df.head(50), use_container_width=True)
 
-        c1, c2 = st.columns([1, 1])
-        with c1:
-            st.subheader("Preview")
-            st.dataframe(df.head(50), use_container_width=True)
-        with c2:
-            st.subheader("Shape")
-            st.write(f"Rows: **{df.shape[0]}**")
-            st.write(f"Cols: **{df.shape[1]}**")
-            st.subheader("Missingness report")
-            rep = build_missing_report(df)
-            st.dataframe(rep.head(30), use_container_width=True, height=420)
+        st.subheader("Shape")
+        st.write(f"Rows: **{df.shape[0]}**")
+        st.write(f"Cols: **{df.shape[1]}**")
+        
+        st.subheader("Missingness report")
+        rep = build_missing_report(df)
+        st.dataframe(rep.head(30), use_container_width=True, height=420)
 
         # Build X/y/meta snapshots
         if APP.X_cols:
