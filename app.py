@@ -3448,7 +3448,41 @@ Next upgrades for this tab (recommended):
 """
         )
 
-        # Provide "download all figures so far" convenience
+        st.divider()
+        st.subheader("Analysis description for reports / papers")
+
+        method_format = st.selectbox(
+            "Export analysis description",
+            [
+                "Pipeline summary (short)",
+                "Methods paragraph (paper ready)",
+                "Detailed report (full parameters)",
+            ],
+            key="interpretation_method_format",
+        )
+
+        if method_format == "Pipeline summary (short)":
+            method_text = build_pipeline_summary(APP)
+        elif method_format == "Methods paragraph (paper ready)":
+            method_text = build_methods_paragraph(APP)
+        else:
+            method_text = build_detailed_report(APP)
+
+        st.text_area(
+            "Copy and paste this text",
+            value=method_text,
+            height=300,
+            key="interpretation_method_text",
+        )
+
+        st.download_button(
+            "Download analysis description (.txt)",
+            data=method_text,
+            file_name="analysis_description.txt",
+            mime="text/plain",
+            use_container_width=True,
+        )
+
         st.divider()
         st.subheader("Download everything (all stored figures)")
         if FIGS:
@@ -3461,15 +3495,15 @@ Next upgrades for this tab (recommended):
             )
         else:
             st.info("No figures stored yet. Generate plots in previous tabs first.")
-
-    method_format = st.selectbox(
-    "Export analysis description",
-        [
-        "Pipeline summary (short)",
-        "Methods paragraph (paper ready)",
-        "Detailed report (full parameters)"
-        ]
-    )
+    
+        method_format = st.selectbox(
+        "Export analysis description",
+            [
+            "Pipeline summary (short)",
+            "Methods paragraph (paper ready)",
+            "Detailed report (full parameters)"
+            ]
+        )
 
 
 # -------------------------
