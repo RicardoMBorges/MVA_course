@@ -986,6 +986,190 @@ VIP = Variable Importance in Projection.
 In PLS-DA, VIP is often used to rank variables by overall contribution
 to the latent structure related to the response.
 """,
+
+"validation_overview": """
+**Validation** asks a crucial question:
+
+> Does the model work well only on the data used to build it, or does it also work on new data?
+
+This tab helps students understand whether the classification model is:
+- reliable
+- stable
+- generalizable
+- balanced across classes
+
+Main ideas shown here:
+- **cross-validation**
+- **accuracy**
+- **balanced accuracy**
+- **confusion matrix**
+- **ROC curve** (for binary classification)
+- **classification report**
+
+Didactic note:
+A model is not good just because it fits the training data.
+A good model must also perform well on data it has not seen before.
+""",
+
+"validation_cv_overview": """
+**Cross-validation** is a strategy to estimate model performance on unseen data.
+
+Instead of training and testing on the same samples, the dataset is split into parts:
+- some samples are used for training
+- the remaining samples are used for testing
+
+This process is repeated several times.
+
+### Why do this?
+Because testing on the same data used for training gives an overly optimistic result.
+
+### In this app
+- **Folds** = how many parts the data is divided into
+- **Repeats** = how many times the split procedure is repeated with different random shuffles
+
+Didactic note:
+Cross-validation is especially important when the dataset is small.
+""",
+
+"validation_accuracy": """
+**Accuracy** is the fraction of correctly classified samples.
+
+Formula:
+
+Accuracy = correct predictions / total predictions
+
+### Example
+If 18 out of 20 samples are correctly classified:
+
+Accuracy = 18 / 20 = 0.90
+
+### Limitation
+Accuracy can be misleading when classes are imbalanced.
+
+Example:
+- 90 samples from class A
+- 10 samples from class B
+
+A model that always predicts class A already gets 90% accuracy,
+even though it completely fails for class B.
+""",
+
+"validation_balanced_accuracy": """
+**Balanced accuracy** gives equal importance to each class.
+
+It is especially useful when the classes are not equally represented.
+
+### Idea
+Instead of focusing only on the total number of correct predictions,
+balanced accuracy averages the recall obtained in each class.
+
+### Why is this useful?
+Because it prevents the largest class from dominating the metric.
+
+### Interpretation
+- high balanced accuracy = model performs reasonably well across classes
+- low balanced accuracy = one or more classes are being poorly predicted
+""",
+
+"validation_confusion_matrix": """
+A **confusion matrix** shows how predicted classes compare to true classes.
+
+Rows = true classes  
+Columns = predicted classes
+
+### Diagonal cells
+These are correct predictions.
+
+### Off-diagonal cells
+These are classification errors.
+
+### Why is this useful?
+Because it shows *where* the model is making mistakes.
+
+For example:
+- class A may be confused with class B
+- class C may be predicted very well
+- one class may be systematically misclassified
+
+Didactic note:
+A confusion matrix is often more informative than a single performance number.
+""",
+
+"validation_roc": """
+The **ROC curve** is used for **binary classification**.
+
+ROC = Receiver Operating Characteristic
+
+It shows the trade-off between:
+- **True Positive Rate (Sensitivity)**
+- **False Positive Rate**
+
+for different classification thresholds.
+
+### Interpretation
+A model with a better ROC curve separates the two classes more effectively.
+
+### AUC
+The **Area Under the Curve (AUC)** summarizes ROC performance:
+
+- **AUC = 0.5** → no discrimination (random-like)
+- **AUC = 1.0** → perfect separation
+
+### Important
+ROC is shown here only for **binary targets**.
+For multiclass data, this simple ROC view is not directly applicable.
+""",
+
+"validation_positive_class": """
+In binary classification, one class is treated as the **positive class**.
+
+This matters for:
+- ROC curve
+- sensitivity
+- specificity
+- probability interpretation
+
+### Example
+If the classes are:
+- Control
+- Treated
+
+you may choose **Treated** as the positive class if that is the condition of interest.
+
+Didactic note:
+Changing the positive class changes how the ROC calculation is interpreted.
+""",
+
+"validation_classification_report": """
+The **classification report** summarizes performance for each class.
+
+Common terms:
+- **Precision**: among predicted positives, how many were truly positive?
+- **Recall**: among true positives, how many were recovered?
+- **F1-score**: balance between precision and recall
+- **Support**: number of true samples in that class
+
+### Why is this useful?
+Because two models with the same accuracy may behave very differently for specific classes.
+
+Didactic note:
+This table is very useful when one class is harder to predict than another.
+""",
+
+"validation_repeats": """
+Repeating cross-validation gives a more stable estimate of performance.
+
+Why?
+Because one random split may be unusually favorable or unfavorable.
+
+### With repeats
+The model is evaluated over several different fold assignments.
+
+This reduces dependence on a single random partition of the data.
+
+Didactic note:
+More repeats usually improve stability, but they also increase computation time.
+""",
 }
 
 # =====================================================
