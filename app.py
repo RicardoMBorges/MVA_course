@@ -223,6 +223,7 @@ def build_missing_report(df: pd.DataFrame) -> pd.DataFrame:
 # State container
 # -------------------------
 @dataclass
+@dataclass
 class AppData:
     raw: Optional[pd.DataFrame] = None
     X_cols: Optional[List[str]] = None
@@ -243,6 +244,9 @@ class AppData:
     vip_df: Optional[pd.DataFrame] = None
     plsda_scores_df: Optional[pd.DataFrame] = None
 
+    preprocess_params: Optional[Dict] = None
+    model_params: Optional[Dict] = None
+    validation_params: Optional[Dict] = None
 
 if "app" not in st.session_state:
     st.session_state["app"] = AppData()
