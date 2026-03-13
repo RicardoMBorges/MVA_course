@@ -1097,6 +1097,7 @@ A useful mental model:
                 ],
                 index=0,
                 help=PARAM_HELP["sample_norm"],
+                key="sample_norm_preprocess",
             )
 
             transform = st.selectbox(
@@ -1111,6 +1112,7 @@ A useful mental model:
                 ],
                 index=0,
                 help=PARAM_HELP["transform"],
+                key="transform_preprocess",
             )
 
         with c3:
@@ -1123,6 +1125,7 @@ A useful mental model:
                 ],
                 index=0,
                 help=PARAM_HELP["alignment"],
+                key="alignment_preprocess",
             )
 
             scaling = st.selectbox(
@@ -1136,6 +1139,8 @@ A useful mental model:
                 "Drop zero-variance features",
                 value=True,
                 help=PARAM_HELP["drop_zero_var"],
+                key="scaling_preprocess",
+                key="drop_zero_var_preprocess",
             )
 
         st.divider()
