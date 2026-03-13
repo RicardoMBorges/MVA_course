@@ -578,19 +578,51 @@ def add_confidence_ellipse_to_fig(
     level: float = 0.95,
 ):
     """
-    Adds filled 95% confidence ellipses using the same colors as the scatter points.
+    Adds filled confidence ellipses using the same color as the scatter group.
     """
 
-    if group_col is None or group_col not in df_plot.columns:
+    groups = df_plot[group_col].dropna().astype(str).unique()
+
+    # Build color map from scatter traces
+    color_map = {}
+    for trace in fig.data:
+        if hasattr(trace, "marker") and trace.name in groups:
+            color_map[trace.name] = trace.marker.color
+
+    for grp in groups:
+
+        sub = df_plot[df_plot[group_col].astype(str) == grp]
+
+        if sub.shape[0] < 3:
+            continue
 
         ex, ey = _confidence_ellipse_from_scores(
-            df_plot[x_col].values,
-            df_plot[y_col].values,
+            sub[x_col].values,
+            sub[y_col].values,
             level=level
         )
 
         if ex is None:
-            return fig
+            continue
+
+        base_color = color_map.get(grp, "rgb(0,0,255)")
+
+        # convert to transparent rgba
+        if isinstance(base_color, str):
+
+            if base_color.startswith("rgb("):
+                r, g, b = base_color[4:-1].split(",")
+                fillcolor = f"rgba({r},{g},{b},0.18)"
+
+            elif base_color.startswith("rgba("):
+                r, g, b, _ = base_color[5:-1].split(",")
+                fillcolor = f"rgba({r},{g},{b},0.18)"
+
+            else:
+                fillcolor = "rgba(0,0,255,0.18)"
+
+        else:
+            fillcolor = "rgba(0,0,255,0.18)"
 
         fig.add_trace(
             go.Scatter(
@@ -599,13 +631,13 @@ def add_confidence_ellipse_to_fig(
                 mode="lines",
                 line=dict(width=0),
                 fill="toself",
-                fillcolor="rgba(0,0,200,0.15)",
+                fillcolor=fillcolor,
                 showlegend=False,
                 hoverinfo="skip",
             )
         )
 
-        return fig
+    return fig
 
     groups = df_plot[group_col].dropna().astype(str).unique()
 
