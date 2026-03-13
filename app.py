@@ -579,18 +579,47 @@ def add_confidence_ellipse_to_fig(
 ):
     """
     Adds filled confidence ellipses using the same color as the scatter group.
+    Works with Plotly colors in hex, rgb, or rgba formats.
     """
+    if group_col is None or group_col not in df_plot.columns:
+        return fig
 
     groups = df_plot[group_col].dropna().astype(str).unique()
 
-    # Build color map from scatter traces
+    # Read group colors from the existing scatter traces
     color_map = {}
     for trace in fig.data:
-        if hasattr(trace, "marker") and trace.name in groups:
-            color_map[trace.name] = trace.marker.color
+        if getattr(trace, "name", None) in groups and hasattr(trace, "marker"):
+            color_map[str(trace.name)] = trace.marker.color
+
+    def color_to_rgba(color, alpha=0.18):
+        if color is None:
+            return f"rgba(99,110,250,{alpha})"
+
+        color = str(color).strip()
+
+        # hex color: #RRGGBB
+        if color.startswith("#") and len(color) == 7:
+            r = int(color[1:3], 16)
+            g = int(color[3:5], 16)
+            b = int(color[5:7], 16)
+            return f"rgba({r},{g},{b},{alpha})"
+
+        # rgb(r,g,b)
+        if color.startswith("rgb(") and color.endswith(")"):
+            vals = color[4:-1]
+            return f"rgba({vals},{alpha})"
+
+        # rgba(r,g,b,a)
+        if color.startswith("rgba(") and color.endswith(")"):
+            vals = [v.strip() for v in color[5:-1].split(",")]
+            if len(vals) >= 3:
+                return f"rgba({vals[0]},{vals[1]},{vals[2]},{alpha})"
+
+        # fallback
+        return f"rgba(99,110,250,{alpha})"
 
     for grp in groups:
-
         sub = df_plot[df_plot[group_col].astype(str) == grp]
 
         if sub.shape[0] < 3:
@@ -605,24 +634,8 @@ def add_confidence_ellipse_to_fig(
         if ex is None:
             continue
 
-        base_color = color_map.get(grp, "rgb(0,0,255)")
-
-        # convert to transparent rgba
-        if isinstance(base_color, str):
-
-            if base_color.startswith("rgb("):
-                r, g, b = base_color[4:-1].split(",")
-                fillcolor = f"rgba({r},{g},{b},0.18)"
-
-            elif base_color.startswith("rgba("):
-                r, g, b, _ = base_color[5:-1].split(",")
-                fillcolor = f"rgba({r},{g},{b},0.18)"
-
-            else:
-                fillcolor = "rgba(0,0,255,0.18)"
-
-        else:
-            fillcolor = "rgba(0,0,255,0.18)"
+        base_color = color_map.get(str(grp), None)
+        fillcolor = color_to_rgba(base_color, alpha=0.18)
 
         fig.add_trace(
             go.Scatter(
