@@ -2294,7 +2294,16 @@ with tabs[3]:
             pcy = st.selectbox("Y axis", [f"PC{i+1}" for i in range(n_comp)], index=1)
         
             show_ellipse = st.checkbox("Show 95% confidence ellipse", value=True, key="explore_pca_ellipse")
-        
+
+            group_color_map = None
+            if color_by is not None and color_by in scores_df.columns:
+                groups_sorted = sorted(scores_df[color_by].dropna().astype(str).unique().tolist())
+                palette = px.colors.qualitative.Plotly
+                group_color_map = {
+                    grp: palette[i % len(palette)]
+                    for i, grp in enumerate(groups_sorted)
+                }
+         
             fig_scores = px.scatter(
                 scores_df,
                 x=pcx,
