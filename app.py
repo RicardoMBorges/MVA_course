@@ -578,30 +578,83 @@ def add_confidence_ellipse_to_fig(
     level: float = 0.95,
 ):
     """
-    Adds filled 95% confidence regions (ellipse) to PCA plots.
+    Adds filled 95% confidence ellipses using the same colors as the scatter points.
     """
 
     if group_col is None or group_col not in df_plot.columns:
+
         ex, ey = _confidence_ellipse_from_scores(
             df_plot[x_col].values,
             df_plot[y_col].values,
             level=level
         )
 
-        if ex is not None:
-            fig.add_trace(
-                go.Scatter(
-                    x=ex,
-                    y=ey,
-                    mode="lines",
-                    line=dict(width=0),
-                    fill="toself",
-                    fillcolor="rgba(100,100,200,0.15)",
-                    name=f"{int(level*100)}% confidence",
-                    hoverinfo="skip",
-                )
+        if ex is None:
+            return fig
+
+        fig.add_trace(
+            go.Scatter(
+                x=ex,
+                y=ey,
+                mode="lines",
+                line=dict(width=0),
+                fill="toself",
+                fillcolor="rgba(0,0,200,0.15)",
+                showlegend=False,
+                hoverinfo="skip",
             )
+        )
+
         return fig
+
+    groups = df_plot[group_col].dropna().astype(str).unique()
+
+    # Map group -> color from scatter traces
+    color_map = {}
+    for trace in fig.data:
+        if trace.name in groups:
+            color_map[trace.name] = trace.marker.color
+
+    for grp in groups:
+
+        sub = df_plot[df_plot[group_col].astype(str) == grp]
+
+        if sub.shape[0] < 3:
+            continue
+
+        ex, ey = _confidence_ellipse_from_scores(
+            sub[x_col].values,
+            sub[y_col].values,
+            level=level
+        )
+
+        if ex is None:
+            continue
+
+        base_color = color_map.get(grp, "rgba(0,0,200,1)")
+
+        # convert to transparent
+        if "rgba" in str(base_color):
+            fillcolor = base_color.replace("1)", "0.15)")
+        elif "rgb" in str(base_color):
+            fillcolor = base_color.replace("rgb", "rgba").replace(")", ",0.15)")
+        else:
+            fillcolor = "rgba(0,0,200,0.15)"
+
+        fig.add_trace(
+            go.Scatter(
+                x=ex,
+                y=ey,
+                mode="lines",
+                line=dict(width=0),
+                fill="toself",
+                fillcolor=fillcolor,
+                showlegend=False,
+                hoverinfo="skip",
+            )
+        )
+
+    return fig
 
     # One ellipse per group
     groups = df_plot[group_col].dropna().astype(str).unique()
