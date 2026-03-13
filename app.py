@@ -2048,9 +2048,6 @@ Here we do something didactic:
     # Explained variance
     evr = pca.explained_variance_ratio_ * 100.0
  
-    fig_scores.update_xaxes(title=f"{pcx} ({evr[int(pcx[2:])-1]:.1f}% var)")
-    fig_scores.update_yaxes(title=f"{pcy} ({evr[int(pcy[2:])-1]:.1f}% var)")
- 
     evr_df = pd.DataFrame({"PC": [f"PC{i+1}" for i in range(n_comp)], "Explained_%": evr})
     fig_evr = px.bar(evr_df, x="PC", y="Explained_%", title="PCA explained variance (%) — (computed here)")
     st.plotly_chart(fig_evr, use_container_width=True, config={"displaylogo": False})
