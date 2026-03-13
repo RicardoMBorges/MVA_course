@@ -297,9 +297,13 @@ def quantile_normalize_rows(X: pd.DataFrame) -> pd.DataFrame:
     A = X.to_numpy(dtype=float, copy=True)
     order = np.argsort(A, axis=1)
     sorted_vals = np.take_along_axis(A, order, axis=1)
-    mean_sorted = np.nanmean(sorted_vals, axis=0)
+
+    with np.errstate(invalid="ignore"):
+        mean_sorted = np.nanmean(sorted_vals, axis=0)
+
     out = np.empty_like(A)
     np.put_along_axis(out, order, mean_sorted[None, :], axis=1)
+
     return pd.DataFrame(out, index=X.index, columns=X.columns)
 
 
