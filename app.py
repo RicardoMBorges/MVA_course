@@ -2242,7 +2242,9 @@ with tabs[3]:
                 hover_data=hover_cols,
                 title=f"PCA Scores: {pcx} vs {pcy}",
             )
-        
+         
+            fig_scores.update_traces(marker=dict(size=9, line=dict(width=0)))
+
             if show_ellipse:
                 fig_scores = add_confidence_ellipse_to_fig(
                     fig_scores,
