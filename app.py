@@ -1519,8 +1519,8 @@ tabs = st.tabs(
         "3) Exploration",
         "4) Modeling",
         "5) Validation",
-        "6) Interpretation",
-        "7) Univariate Analysis",
+        "6) Univariate Analysis",
+        "7) Interpretation",
     ]
 )
 
@@ -3444,90 +3444,11 @@ with tabs[5]:
             st.markdown(PARAM_HELP["validation_classification_report"])
 
         st.code(classification_report(y_true, y_pred), language="text")
-
 # -------------------------
-# 6) Interpretation
+# 6) Univariate Analysis
 # -------------------------
 with tabs[6]:
-    st.header("6) Interpretation")
-
-    if APP.X_proc is None:
-        st.info("Run preprocessing first.")
-    else:
-        st.subheader("Interpretation is *visual* + contextual")
-        st.write(
-            """
-This tab is the place to teach:
-- What a separation/prediction means in **real terms**
-- Which variables matter **and why**
-- How to avoid overclaiming (validation + domain knowledge)
-
-For now, this starter app includes:
-- PCA explained variance + scores (Exploration tab)
-- Model coefficients / feature strength (Modeling tab)
-- Confusion matrix + ROC (Validation tab)
-
-Next upgrades for this tab (recommended):
-- Contribution plots for selected samples/groups
-- Permutation tests (PLS-DA style)
-- SHAP (tree models) or permutation importance (any model)
-- Report generator (HTML/PDF)
-"""
-        )
-
-        st.divider()
-        st.subheader("Analysis description for reports / papers")
-
-        method_format = st.selectbox(
-            "Export analysis description",
-            [
-                "Pipeline summary (short)",
-                "Methods paragraph (paper ready)",
-                "Detailed report (full parameters)",
-            ],
-            key="interpretation_method_format",
-        )
-
-        if method_format == "Pipeline summary (short)":
-            method_text = build_pipeline_summary(APP)
-        elif method_format == "Methods paragraph (paper ready)":
-            method_text = build_methods_paragraph(APP)
-        else:
-            method_text = build_detailed_report(APP)
-
-        st.text_area(
-            "Copy and paste this text",
-            value=method_text,
-            height=300,
-            key="interpretation_method_text",
-        )
-
-        st.download_button(
-            "Download analysis description (.txt)",
-            data=method_text,
-            file_name="analysis_description.txt",
-            mime="text/plain",
-            use_container_width=True,
-        )
-
-        st.divider()
-        st.subheader("Download everything (all stored figures)")
-        if FIGS:
-            st.download_button(
-                "Download ALL figures from all tabs (ZIP of HTML)",
-                data=zip_html(FIGS),
-                file_name="all_figures_html.zip",
-                mime="application/zip",
-                use_container_width=True,
-            )
-        else:
-            st.info("No figures stored yet. Generate plots in previous tabs first.")
-
-# -------------------------
-# 7) Univariate Analysis
-# -------------------------
-with tabs[7]:
-    st.header("7) Univariate Analysis")
+    st.header("6) Univariate Analysis")
 
     with st.expander("What is univariate analysis?", expanded=False):
         st.markdown(PARAM_HELP["univariate_overview"])
@@ -3737,3 +3658,82 @@ with tabs[7]:
                 mime="application/zip",
                 use_container_width=True,
             )
+
+# -------------------------
+# 7) Interpretation
+# -------------------------
+with tabs[7]:
+    st.header("7) Interpretation")
+
+    if APP.X_proc is None:
+        st.info("Run preprocessing first.")
+    else:
+        st.subheader("Interpretation is *visual* + contextual")
+        st.write(
+            """
+This tab is the place to teach:
+- What a separation/prediction means in **real terms**
+- Which variables matter **and why**
+- How to avoid overclaiming (validation + domain knowledge)
+
+For now, this starter app includes:
+- PCA explained variance + scores (Exploration tab)
+- Model coefficients / feature strength (Modeling tab)
+- Confusion matrix + ROC (Validation tab)
+
+Next upgrades for this tab (recommended):
+- Contribution plots for selected samples/groups
+- Permutation tests (PLS-DA style)
+- SHAP (tree models) or permutation importance (any model)
+- Report generator (HTML/PDF)
+"""
+        )
+
+        st.divider()
+        st.subheader("Analysis description for reports / papers")
+
+        method_format = st.selectbox(
+            "Export analysis description",
+            [
+                "Pipeline summary (short)",
+                "Methods paragraph (paper ready)",
+                "Detailed report (full parameters)",
+            ],
+            key="interpretation_method_format",
+        )
+
+        if method_format == "Pipeline summary (short)":
+            method_text = build_pipeline_summary(APP)
+        elif method_format == "Methods paragraph (paper ready)":
+            method_text = build_methods_paragraph(APP)
+        else:
+            method_text = build_detailed_report(APP)
+
+        st.text_area(
+            "Copy and paste this text",
+            value=method_text,
+            height=300,
+            key="interpretation_method_text",
+        )
+
+        st.download_button(
+            "Download analysis description (.txt)",
+            data=method_text,
+            file_name="analysis_description.txt",
+            mime="text/plain",
+            use_container_width=True,
+        )
+
+        st.divider()
+        st.subheader("Download everything (all stored figures)")
+        if FIGS:
+            st.download_button(
+                "Download ALL figures from all tabs (ZIP of HTML)",
+                data=zip_html(FIGS),
+                file_name="all_figures_html.zip",
+                mime="application/zip",
+                use_container_width=True,
+            )
+        else:
+            st.info("No figures stored yet. Generate plots in previous tabs first.")
+
