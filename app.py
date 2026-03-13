@@ -1059,7 +1059,6 @@ A useful mental model:
         c1, c2, c3 = st.columns(3)
 
         with c1:
-        with c1:
             impute_strategy = st.selectbox(
                 "Missing value imputation",
                 ["median", "mean", "most_frequent", "constant (0)"],
