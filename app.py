@@ -1059,17 +1059,19 @@ A useful mental model:
         c1, c2, c3 = st.columns(3)
 
         with c1:
+        with c1:
             impute_strategy = st.selectbox(
                 "Missing value imputation",
                 ["median", "mean", "most_frequent", "constant (0)"],
                 index=0,
                 help=PARAM_HELP["imputation"],
             )
-
-            if impute_strategy == "constant (0)":
-                imp = SimpleImputer(strategy="constant", fill_value=0.0)
-            else:
-                imp = SimpleImputer(strategy=impute_strategy)
+        
+            missing_col_thresh = st.slider(
+                "Drop features with missing % above",
+                0, 100, 90,
+                help=PARAM_HELP["missing_thresh"],
+            )
 
             missing_col_thresh = st.slider(
                 "Drop features with missing % above",
