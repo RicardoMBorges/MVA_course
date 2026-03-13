@@ -1174,6 +1174,69 @@ This reduces dependence on a single random partition of the data.
 Didactic note:
 More repeats usually improve stability, but they also increase computation time.
 """,
+"univariate_overview": """
+**Univariate analysis** looks at one variable at a time.
+
+This is useful when you want to:
+- inspect individual features
+- compare distributions between groups
+- test whether one feature differs significantly across groups
+
+This tab complements multivariate analysis:
+- multivariate methods look at patterns across many variables together
+- univariate methods inspect each variable individually
+
+Typical tools:
+- boxplots
+- strip plots / individual points
+- group means and standard deviations
+- t-test (2 groups)
+- ANOVA (3 or more groups)
+""",
+
+"anova_help": """
+**ANOVA** = Analysis of Variance
+
+ANOVA tests whether the mean of a feature differs across multiple groups.
+
+### Null hypothesis
+All group means are equal.
+
+### Alternative hypothesis
+At least one group mean is different.
+
+### Important
+ANOVA tells you whether there is a difference somewhere,
+but not exactly which groups differ from each other.
+
+For that, post-hoc tests would be needed later.
+""",
+
+"ttest_help": """
+A **t-test** compares the means of two groups.
+
+### Null hypothesis
+The two group means are equal.
+
+### Alternative hypothesis
+The two group means are different.
+
+In this tab, the t-test is shown only when exactly 2 groups are present.
+""",
+
+"vip_univariate_help": """
+**VIP ranking** comes from PLS-DA.
+
+VIP = Variable Importance in Projection
+
+Using VIP here is useful because:
+- it prioritizes features that contributed more to multivariate class separation
+- it helps connect multivariate and univariate interpretation
+
+But remember:
+- high VIP does not automatically mean statistically significant in univariate analysis
+- a feature may be important multivariately but not strongly different alone
+""",
 }
 
 # =====================================================
