@@ -869,10 +869,8 @@ with tabs[0]:
         # Build X/y/meta snapshots
         if APP.X_cols:
             APP.X_raw = df[APP.X_cols].copy()
-            APP.feature_names = APP.X_cols.copy()
         else:
             APP.X_raw = None
-            APP.feature_names = None
 
         if APP.y_col:
             APP.y_raw = df[APP.y_col].copy()
