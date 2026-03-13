@@ -513,6 +513,15 @@ def batch_align(X: pd.DataFrame, batch: Optional[pd.Series], method: str) -> pd.
 
     raise ValueError(f"Unknown alignment method: {method}")
 
+def hex_to_rgba(hex_color: str, alpha: float = 0.18) -> str:
+    hex_color = str(hex_color).strip().lstrip("#")
+    if len(hex_color) != 6:
+        return f"rgba(99,110,250,{alpha})"
+    r = int(hex_color[0:2], 16)
+    g = int(hex_color[2:4], 16)
+    b = int(hex_color[4:6], 16)
+    return f"rgba({r},{g},{b},{alpha})"
+
 def _confidence_ellipse_from_scores(
     x: np.ndarray,
     y: np.ndarray,
