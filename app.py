@@ -915,7 +915,7 @@ with tabs[0]:
         help="Be carefull! This is only a general view.")
         
     
-    with st.expander("Raw PCA (no normalization / no scaling)", expanded=False):
+    with st.expander("Help: Raw PCA)", expanded=False):
         st.markdown(PARAM_HELP["raw_pca"])
     
     with st.expander("Raw PCA (no normalization / no scaling)", expanded=False):
