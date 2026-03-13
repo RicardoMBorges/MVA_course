@@ -2110,7 +2110,9 @@ with tabs[3]:
             st.subheader("PCA score plot")
             pcx = st.selectbox("X axis", [f"PC{i+1}" for i in range(n_comp)], index=0)
             pcy = st.selectbox("Y axis", [f"PC{i+1}" for i in range(n_comp)], index=1)
-
+        
+            show_ellipse = st.checkbox("Show 95% confidence ellipse", value=True, key="explore_pca_ellipse")
+        
             fig_scores = px.scatter(
                 scores_df,
                 x=pcx,
@@ -2119,6 +2121,17 @@ with tabs[3]:
                 hover_data=hover_cols,
                 title=f"PCA Scores: {pcx} vs {pcy}",
             )
+        
+            if show_ellipse:
+                fig_scores = add_confidence_ellipse_to_fig(
+                    fig_scores,
+                    scores_df,
+                    x_col=pcx,
+                    y_col=pcy,
+                    group_col=color_by,
+                    level=0.95,
+                )
+        
             fig_scores.update_layout(dragmode="zoom")
             st.plotly_chart(fig_scores, use_container_width=True, config={"displaylogo": False})
             key = "explore_pca_scores"
