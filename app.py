@@ -237,6 +237,7 @@ class AppData:
     X_proc: Optional[np.ndarray] = None
     feature_names: Optional[List[str]] = None
     X_pre_scale: Optional[pd.DataFrame] = None
+    raw_feature_names: Optional[List[str]] = None
 
 
 if "app" not in st.session_state:
