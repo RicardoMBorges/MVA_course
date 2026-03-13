@@ -1905,6 +1905,21 @@ A useful mental model:
             # Store to app state
             APP.X_proc = np.asarray(X_proc, dtype=float)
             APP.feature_names = X_scaled_df.columns.tolist()
+            APP.preprocess_params = {
+                "imputation": impute_strategy,
+                "missing_col_thresh": missing_col_thresh,
+                "sample_norm": sample_norm,
+                "transform": transform,
+                "alignment": alignment,
+                "scaling": scaling,
+                "drop_zero_var": drop_zero_var,
+                "factor_col": factor_col,
+                "ref_sample_id": ref_sample_id,
+                "ref_group": ref_group,
+                "ref_feature": ref_feature,
+                "n_samples": int(X_scaled_df.shape[0]),
+                "n_features_after_preprocessing": int(X_scaled_df.shape[1]),
+            }
 
             st.success(f"Processed X: {APP.X_proc.shape[0]} samples × {APP.X_proc.shape[1]} features")
             st.info("Preprocessing finished. Diagnostic plots are hidden by default below.")
