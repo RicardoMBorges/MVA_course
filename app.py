@@ -813,14 +813,14 @@ def format_preprocessing_method_name(params: Optional[Dict]) -> str:
     if not params:
         return "Not available"
     return (
-        f"Missing value imputation: {params.get('imputation', 'NA')}\n"
-        f"Feature filtering: remove features with >{params.get('missing_col_thresh', 'NA')}% missing values\n"
-        f"Sample normalization: {params.get('sample_norm', 'NA')}\n"
-        f"Transformation: {params.get('transform', 'NA')}\n"
-        f"Alignment / batch correction: {params.get('alignment', 'NA')}\n"
-        f"Scaling: {params.get('scaling', 'NA')}\n"
-        f"Drop zero-variance features: {params.get('drop_zero_var', 'NA')}\n"
-        f"Final matrix: {params.get('n_samples', 'NA')} samples × {params.get('n_features_after_preprocessing', 'NA')} features"
+        f"Missing value imputation:   {params.get('imputation', 'NA')}\n"
+        f"Feature filtering:   remove features with >{params.get('missing_col_thresh', 'NA')}% missing values\n"
+        f"Sample normalization:   {params.get('sample_norm', 'NA')}\n"
+        f"Transformation:   {params.get('transform', 'NA')}\n"
+        f"Alignment / batch correction:  {params.get('alignment', 'NA')}\n"
+        f"Scaling:   {params.get('scaling', 'NA')}\n"
+        f"Drop zero-variance features:   {params.get('drop_zero_var', 'NA')}\n"
+        f"Final matrix:   {params.get('n_samples', 'NA')} samples × {params.get('n_features_after_preprocessing', 'NA')} features"
     )
 
 
