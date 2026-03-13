@@ -326,9 +326,9 @@ def scale_data(X: pd.DataFrame, method: str) -> pd.DataFrame:
     """
     Exact feature-wise formulas from general_norm_utils.R:
       MeanCenter: x - mean(x)
-      AutoNorm: (x - mean(x)) / sd(x)
-      ParetoNorm: (x - mean(x)) / sqrt(sd(x))
-      RangeNorm: (x - mean(x)) / (max(x) - min(x))
+      AutoScale: (x - mean(x)) / sd(x)
+      ParetoScale: (x - mean(x)) / sqrt(sd(x))
+      RangeScale: (x - mean(x)) / (max(x) - min(x))
     """
     if method == "None":
         return X.copy()
@@ -338,7 +338,7 @@ def scale_data(X: pd.DataFrame, method: str) -> pd.DataFrame:
     if method == "MeanCenter":
         return Xs.apply(lambda col: col - col.mean(), axis=0)
 
-    if method == "AutoNorm":
+    if method == "AutoScale":
         def _auto(col):
             sd = col.std(skipna=True, ddof=1)
             if not np.isfinite(sd) or sd == 0:
@@ -346,7 +346,7 @@ def scale_data(X: pd.DataFrame, method: str) -> pd.DataFrame:
             return (col - col.mean()) / sd
         return Xs.apply(_auto, axis=0)
 
-    if method == "ParetoNorm":
+    if method == "ParetoScale":
         def _pareto(col):
             sd = col.std(skipna=True, ddof=1)
             denom = np.sqrt(sd)
@@ -355,7 +355,7 @@ def scale_data(X: pd.DataFrame, method: str) -> pd.DataFrame:
             return (col - col.mean()) / denom
         return Xs.apply(_pareto, axis=0)
 
-    if method == "RangeNorm":
+    if method == "RangeScale":
         def _range(col):
             cmax = col.max(skipna=True)
             cmin = col.min(skipna=True)
@@ -607,9 +607,9 @@ Because some features naturally have much larger variance or intensity than othe
 
 Examples:
 - **MeanCenter**: subtract the mean only
-- **AutoNorm**: mean-center and divide by standard deviation
-- **ParetoNorm**: softer than autoscaling
-- **RangeNorm**: scales by max-min range
+- **AutoScale**: mean-center and divide by standard deviation
+- **ParetoScale**: softer than autoscaling
+- **RangeScale**: scales by max-min range
 
 Didactic note:
 Scaling acts mainly at the **feature level**.
@@ -1125,7 +1125,7 @@ A useful mental model:
 
             scaling = st.selectbox(
                 "Scaling (MetaboAnalystR names)",
-                ["None", "MeanCenter", "AutoNorm", "ParetoNorm", "RangeNorm"],
+                ["None", "MeanCenter", "AutoScale", "ParetoScale", "RangeScale"],
                 index=2,
                 help=PARAM_HELP["scaling"],
             )
