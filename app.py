@@ -94,26 +94,30 @@ def zip_html(figs: Dict[str, go.Figure]) -> bytes:
     buff.seek(0)
     return buff.read()
 
-def impute_df_safe(X: pd.DataFrame, strategy: str = "median") -> Tuple[pd.DataFrame, List[str]]:
-    """
-    Imputa NaNs, mas primeiro remove colunas que são 100% NaN,
-    porque o sklearn SimpleImputer pode reduzir a dimensionalidade.
-    Returns: (X_imputed, dropped_all_nan_cols)
-    """
+def impute_df_safe(
+    X: pd.DataFrame,
+    strategy: str = "median",
+    fill_value: Optional[float] = None,
+) -> Tuple[pd.DataFrame, List[str]]:
     X2 = X.copy()
-
-    # remove inf
     X2 = X2.replace([np.inf, -np.inf], np.nan)
 
-    # drop columns that are entirely NaN
     all_nan = X2.isna().all(axis=0)
     dropped = all_nan[all_nan].index.tolist()
     if dropped:
         X2 = X2.loc[:, ~all_nan]
 
-    # If after dropping all-NaN columns nothing remains, return empty
     if X2.shape[1] == 0:
         return X2, dropped
+
+    if strategy == "constant":
+        imp = SimpleImputer(strategy="constant", fill_value=fill_value)
+    else:
+        imp = SimpleImputer(strategy=strategy)
+
+    X_imp = imp.fit_transform(X2.values)
+    X_imp_df = pd.DataFrame(X_imp, index=X2.index, columns=X2.columns)
+    return X_imp_df, dropped
 
     imp = SimpleImputer(strategy=strategy)
     X_imp = imp.fit_transform(X2.values)
@@ -1248,8 +1252,26 @@ A useful mental model:
             X_df2 = X_df[keep_cols].copy()
 
             # 1) Impute (feature-wise, using selected strategy)
-            X_imp = imp.fit_transform(X_df2.values)
-            X_imp_df = pd.DataFrame(X_imp, index=X_df2.index, columns=X_df2.columns)
+            imp_strategy = "constant" if impute_strategy == "constant (0)" else impute_strategy
+            
+            X_imp_df, dropped_all_nan_pre = impute_df_safe(
+                X_df2,
+                strategy=imp_strategy,
+            )
+            
+            if impute_strategy == "constant (0)":
+                # overwrite with constant-zero imputation after dropping all-NaN columns
+                imp0 = SimpleImputer(strategy="constant", fill_value=0.0)
+                X_imp_df = pd.DataFrame(
+                    imp0.fit_transform(X_imp_df),
+                    index=X_imp_df.index,
+                    columns=X_imp_df.columns,
+                )
+            
+            if dropped_all_nan_pre:
+                st.warning(
+                    f"Dropped {len(dropped_all_nan_pre)} feature(s) that were entirely missing before imputation."
+                )
 
             # 2) Sample normalization (row-wise)
             sample_factor = df_full[factor_col] if factor_col else None
