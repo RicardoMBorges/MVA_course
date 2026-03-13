@@ -2552,7 +2552,22 @@ with tabs[4]:
             with c1:
                 lvx = st.selectbox("X axis", [f"LV{i+1}" for i in range(n_comp)], index=0, key="plsda_lvx")
                 lvy = st.selectbox("Y axis", [f"LV{i+1}" for i in range(n_comp)], index=1, key="plsda_lvy")
-
+            
+                show_pls_ellipse = st.checkbox(
+                    "Show 95% confidence ellipse",
+                    value=True,
+                    key="plsda_score_ellipse",
+                )
+            
+                pls_group_color_map = None
+                if "class" in scores_df.columns:
+                    groups_sorted = sorted(scores_df["class"].dropna().astype(str).unique().tolist())
+                    palette = px.colors.qualitative.Plotly
+                    pls_group_color_map = {
+                        grp: palette[i % len(palette)]
+                        for i, grp in enumerate(groups_sorted)
+                    }
+            
                 fig_pls_scores = px.scatter(
                     scores_df,
                     x=lvx,
@@ -2560,10 +2575,25 @@ with tabs[4]:
                     color="class",
                     hover_data=hover_cols,
                     title=f"PLS-DA Scores: {lvx} vs {lvy}",
+                    color_discrete_map=pls_group_color_map if pls_group_color_map is not None else None,
                 )
+            
+                fig_pls_scores.update_traces(marker=dict(size=9, line=dict(width=0)))
+            
+                if show_pls_ellipse:
+                    fig_pls_scores = add_confidence_ellipse_to_fig(
+                        fig_pls_scores,
+                        scores_df,
+                        x_col=lvx,
+                        y_col=lvy,
+                        group_col="class",
+                        level=0.95,
+                        color_map=pls_group_color_map,
+                    )
+            
                 fig_pls_scores.update_layout(dragmode="zoom")
                 st.plotly_chart(fig_pls_scores, use_container_width=True, config={"displaylogo": False})
-
+            
                 key = "model_plsda_scores"
                 store_fig(key, fig_pls_scores)
                 add_download_html_button(fig_pls_scores, "Download HTML: PLS-DA scores", key)
