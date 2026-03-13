@@ -1261,20 +1261,16 @@ A useful mental model:
             X_df2 = X_df[keep_cols].copy()
 
             # 1) Impute (feature-wise, using selected strategy)
-            imp_strategy = "constant" if impute_strategy == "constant (0)" else impute_strategy
-            
-            X_imp_df, dropped_all_nan_pre = impute_df_safe(
-                X_df2,
-                strategy=imp_strategy,
-            )
-            
             if impute_strategy == "constant (0)":
-                # overwrite with constant-zero imputation after dropping all-NaN columns
-                imp0 = SimpleImputer(strategy="constant", fill_value=0.0)
-                X_imp_df = pd.DataFrame(
-                    imp0.fit_transform(X_imp_df),
-                    index=X_imp_df.index,
-                    columns=X_imp_df.columns,
+                X_imp_df, dropped_all_nan_pre = impute_df_safe(
+                    X_df2,
+                    strategy="constant",
+                    fill_value=0.0,
+                )
+            else:
+                X_imp_df, dropped_all_nan_pre = impute_df_safe(
+                    X_df2,
+                    strategy=impute_strategy,
                 )
             
             if dropped_all_nan_pre:
