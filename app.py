@@ -585,13 +585,51 @@ def add_confidence_ellipse_to_fig(
     y_col: str,
     group_col: Optional[str] = None,
     level: float = 0.95,
+    color_map: Optional[Dict[str, str]] = None,
 ):
     """
-    Adds filled confidence ellipses using the same color as the scatter group.
-    Works with Plotly colors in hex, rgb, or rgba formats.
+    Adds filled confidence ellipses using the SAME explicit color map as the scatter plot.
     """
     if group_col is None or group_col not in df_plot.columns:
         return fig
+
+    groups = df_plot[group_col].dropna().astype(str).unique()
+
+    for grp in groups:
+        sub = df_plot[df_plot[group_col].astype(str) == grp]
+
+        if sub.shape[0] < 3:
+            continue
+
+        ex, ey = _confidence_ellipse_from_scores(
+            sub[x_col].values,
+            sub[y_col].values,
+            level=level
+        )
+
+        if ex is None:
+            continue
+
+        base_hex = None
+        if color_map is not None:
+            base_hex = color_map.get(str(grp), None)
+
+        fillcolor = hex_to_rgba(base_hex, alpha=0.18) if base_hex else "rgba(99,110,250,0.18)"
+
+        fig.add_trace(
+            go.Scatter(
+                x=ex,
+                y=ey,
+                mode="lines",
+                line=dict(width=0),
+                fill="toself",
+                fillcolor=fillcolor,
+                showlegend=False,
+                hoverinfo="skip",
+            )
+        )
+
+    return fig
 
     groups = df_plot[group_col].dropna().astype(str).unique()
 
