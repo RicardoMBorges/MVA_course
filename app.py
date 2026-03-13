@@ -3014,12 +3014,11 @@ with tabs[5]:
         # -------------------------
         # CV controls
         # -------------------------
+        st.subheader("Cross-validation")
         with st.expander("Help — Cross-validation settings", expanded=False):
             st.markdown(PARAM_HELP["validation_cv_overview"])
             st.markdown(PARAM_HELP["validation_repeats"])
          
-        st.subheader("Cross-validation")
-
         cv_folds = st.slider(
             "Folds",
             min_value=2,
@@ -3176,10 +3175,11 @@ with tabs[5]:
         # -------------------------
         # Text report
         # -------------------------
+        st.subheader("Classification report (text)")
         st.divider()
         with st.expander("Help — Classification report", expanded=False):
             st.markdown(PARAM_HELP["validation_classification_report"])
-        st.subheader("Classification report (text)")
+
         st.code(classification_report(y_true, y_pred), language="text")
 
 # -------------------------
