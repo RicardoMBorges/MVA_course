@@ -1066,6 +1066,7 @@ A useful mental model:
                 ["median", "mean", "most_frequent", "constant (0)"],
                 index=0,
                 help=PARAM_HELP["imputation"],
+                key="impute_strategy_preprocess",
             )
         
             missing_col_thresh = st.slider(
