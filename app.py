@@ -239,6 +239,9 @@ class AppData:
     X_pre_scale: Optional[pd.DataFrame] = None
     raw_feature_names: Optional[List[str]] = None
 
+    vip_df: Optional[pd.DataFrame] = None
+    plsda_scores_df: Optional[pd.DataFrame] = None
+
 
 if "app" not in st.session_state:
     st.session_state["app"] = AppData()
