@@ -1377,6 +1377,7 @@ tabs = st.tabs(
         "4) Modeling",
         "5) Validation",
         "6) Interpretation",
+        "7) Univariate Analysis",
     ]
 )
 
@@ -3015,6 +3016,8 @@ with tabs[4]:
                 vip[j] = np.sqrt(p * s / SS_sum) if np.isfinite(SS_sum) and SS_sum > 0 else np.nan
 
             vip_df = pd.DataFrame({"feature": feats, "VIP": vip}).sort_values("VIP", ascending=False)
+            APP.vip_df = vip_df.copy()
+            APP.plsda_scores_df = scores_df.copy()
             topn_vip = st.slider("Top VIP features", 5, min(100, len(feats)), 30, key="plsda_topn_vip")
             vip_show = vip_df.head(topn_vip)
 
