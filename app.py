@@ -2218,7 +2218,6 @@ with tabs[4]:
                 )
 
             # Fit PLS
-            from sklearn.cross_decomposition import PLSRegression
             pls = PLSRegression(n_components=n_comp)
             pls.fit(X, Y)
 
