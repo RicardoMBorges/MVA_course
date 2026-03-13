@@ -2615,7 +2615,7 @@ with tabs[4]:
                 # Q² (cross-validated predictive ability)
                 # -----------------------------
 
-                st.subheader("Cross-validated Q²",help="THIS IS IT")
+                st.subheader("Cross-validated Q²",help="Q² measures how well the model predicts new data, usually using cross-validation.")
 
                 # CV parameters
                 cv_folds = st.slider(
