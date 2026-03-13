@@ -2611,6 +2611,51 @@ with tabs[4]:
                 # Also show class distribution for context
                 st.write("Classes:", classes)
 
+                # -------------------------------------------------
+                # What is Q²? (didactic dropdown explanation)
+                # -------------------------------------------------
+                with st.expander("What is Q² (cross-validated predictive ability)?", expanded=False):
+                
+                    st.markdown("""
+                **Q² measures how well the model predicts unseen samples.**
+                
+                Unlike **R²**, which measures how well the model fits the training data,
+                Q² evaluates predictive performance using **cross-validation**.
+                
+                ### Concept
+                
+                1. The dataset is split into several folds.
+                2. The model is trained on part of the data.
+                3. Predictions are made on the left-out samples.
+                4. Prediction errors are accumulated.
+                
+                ### Formula
+                
+                Q² = 1 − (PRESS / TSS)
+                
+                where:
+                
+                - **PRESS** = predictive residual sum of squares (cross-validated errors)
+                - **TSS** = total sum of squares
+                
+                ### Interpretation
+                
+                | Q² value | Meaning |
+                |--------|--------|
+                | < 0 | model predicts worse than the mean |
+                | 0 – 0.3 | weak predictive power |
+                | 0.3 – 0.5 | moderate predictive ability |
+                | > 0.5 | good predictive model |
+                
+                ### Important
+                
+                A good model should satisfy:
+                
+                R² − Q² < 0.3
+                
+                Otherwise the model may be **overfitting**.
+                """)
+             
                 # -----------------------------
                 # Q² (cross-validated predictive ability)
                 # -----------------------------
