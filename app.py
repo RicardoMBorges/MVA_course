@@ -809,6 +809,118 @@ def didactic_help(title: str, key: str, expanded: bool = False):
     with st.expander(f"Help — {title}", expanded=expanded):
         st.markdown(text)
 
+def format_preprocessing_method_name(params: Optional[Dict]) -> str:
+    if not params:
+        return "Not available"
+    return (
+        f"Missing value imputation: {params.get('imputation', 'NA')}\n"
+        f"Feature filtering: remove features with >{params.get('missing_col_thresh', 'NA')}% missing values\n"
+        f"Sample normalization: {params.get('sample_norm', 'NA')}\n"
+        f"Transformation: {params.get('transform', 'NA')}\n"
+        f"Alignment / batch correction: {params.get('alignment', 'NA')}\n"
+        f"Scaling: {params.get('scaling', 'NA')}\n"
+        f"Drop zero-variance features: {params.get('drop_zero_var', 'NA')}\n"
+        f"Final matrix: {params.get('n_samples', 'NA')} samples × {params.get('n_features_after_preprocessing', 'NA')} features"
+    )
+
+
+def build_pipeline_summary(app: AppData) -> str:
+    parts = []
+    parts.append("MULTIVARIATE ANALYSIS PIPELINE\n")
+
+    if app.preprocess_params:
+        parts.append("PREPROCESSING")
+        parts.append(format_preprocessing_method_name(app.preprocess_params))
+        parts.append("")
+
+    if app.model_params:
+        parts.append("MODELING")
+        mp = app.model_params
+        for k, v in mp.items():
+            parts.append(f"{k}: {v}")
+        parts.append("")
+
+    if app.validation_params:
+        parts.append("VALIDATION")
+        vp = app.validation_params
+        for k, v in vp.items():
+            parts.append(f"{k}: {v}")
+        parts.append("")
+
+    return "\n".join(parts)
+
+
+def build_methods_paragraph(app: AppData) -> str:
+    pp = app.preprocess_params or {}
+    mp = app.model_params or {}
+    vp = app.validation_params or {}
+
+    imputation = pp.get("imputation", "not specified")
+    miss = pp.get("missing_col_thresh", "not specified")
+    norm = pp.get("sample_norm", "not specified")
+    transf = pp.get("transform", "not specified")
+    align = pp.get("alignment", "not specified")
+    scaling = pp.get("scaling", "not specified")
+
+    model_kind = mp.get("model_kind", "not specified")
+    n_comp = mp.get("n_components", None)
+
+    cv_folds = vp.get("cv_folds", None)
+    cv_repeats = vp.get("cv_repeats", None)
+
+    model_sentence = f"Supervised modeling was performed using {model_kind}"
+    if n_comp is not None:
+        model_sentence += f" with {n_comp} latent variables"
+    model_sentence += "."
+
+    validation_sentence = "Model validation settings were not recorded."
+    if cv_folds is not None and cv_repeats is not None:
+        validation_sentence = (
+            f"Model performance was evaluated using stratified {cv_folds}-fold cross-validation "
+            f"with {cv_repeats} repeat(s)."
+        )
+
+    text = (
+        f"Data preprocessing and multivariate analysis were performed using the Streamlit-based "
+        f"Multivariate Data Analysis Course application implemented in Python. "
+        f"Features with more than {miss}% missing values were removed, and missing values were imputed using {imputation}. "
+        f"Sample normalization was performed using {norm}, followed by data transformation using {transf}. "
+        f"Alignment / batch correction was set to {align}, and feature scaling was performed using {scaling}. "
+        f"{model_sentence} {validation_sentence}"
+    )
+    return text
+
+
+def build_detailed_report(app: AppData) -> str:
+    lines = []
+    lines.append("DETAILED ANALYSIS REPORT")
+    lines.append("")
+
+    lines.append("PREPROCESSING PARAMETERS")
+    if app.preprocess_params:
+        for k, v in app.preprocess_params.items():
+            lines.append(f"- {k}: {v}")
+    else:
+        lines.append("- Not available")
+
+    lines.append("")
+    lines.append("MODELING PARAMETERS")
+    if app.model_params:
+        for k, v in app.model_params.items():
+            lines.append(f"- {k}: {v}")
+    else:
+        lines.append("- Not available")
+
+    lines.append("")
+    lines.append("VALIDATION PARAMETERS")
+    if app.validation_params:
+        for k, v in app.validation_params.items():
+            lines.append(f"- {k}: {v}")
+    else:
+        lines.append("- Not available")
+
+    return "\n".join(lines)
+
 # -------------------------
 # Didactic text helpers
 # -------------------------
@@ -2976,6 +3088,18 @@ with tabs[4]:
                 Q2 = 1.0 - PRESS / TSS if TSS > 0 else np.nan
 
                 st.metric("Q² (cross-validated)", f"{Q2:.3f}")
+             
+            APP.model_params = {
+                "model_kind": "PLS-DA (PLSRegression on one-hot y)",
+                "n_components": int(n_comp),
+                "classes": classes,
+                "n_samples": int(X.shape[0]),
+                "n_features": int(X.shape[1]),
+                "q2_folds": int(cv_folds),
+                "q2_repeats": int(cv_repeats),
+                "q2_seed": int(seed),
+                "Q2": float(Q2) if np.isfinite(Q2) else None,
+            }
 
             st.divider()
             st.subheader("PLS-DA Loadings (which variables drive separation)")
@@ -3164,6 +3288,17 @@ with tabs[5]:
 
         acc = accuracy_score(y_true, y_pred)
         bacc = balanced_accuracy_score(y_true, y_pred)
+        APP.validation_params = {
+            "validation_model": "Logistic Regression",
+            "cv_folds": int(cv_folds),
+            "cv_repeats": int(n_repeats),
+            "random_seed": int(seed),
+            "C": float(C),
+            "max_iter": int(max_iter),
+            "accuracy": float(acc),
+            "balanced_accuracy": float(bacc),
+            "classes": classes.tolist(),
+        }
         st.write(f"Accuracy: **{acc:.3f}**")
         st.write(f"Balanced accuracy: **{bacc:.3f}**")
         with st.expander("Help — Accuracy vs Balanced Accuracy", expanded=False):
@@ -3237,6 +3372,8 @@ with tabs[5]:
                     y_score = proba[:, pos_idx]
 
                     auc = roc_auc_score(y_bin, y_score)
+                    APP.validation_params["positive_class"] = str(pos_label)
+                    APP.validation_params["roc_auc"] = float(auc)
                     fpr, tpr, _ = roc_curve(y_bin, y_score)
 
                     fig_roc = go.Figure()
