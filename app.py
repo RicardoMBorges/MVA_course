@@ -2070,9 +2070,6 @@ with tabs[3]:
 # -------------------------
 # 4) Modeling (LogReg + PLS-DA)
 # -------------------------
-# IMPORTANT: add this import at the top of your file:
-# from sklearn.cross_decomposition import PLSRegression
-
 with tabs[4]:
     st.header("4) Modeling")
 
