@@ -3175,8 +3175,9 @@ with tabs[5]:
         # -------------------------
         # Text report
         # -------------------------
-        st.subheader("Classification report (text)")
         st.divider()
+        st.subheader("Classification report (text)")
+
         with st.expander("Help — Classification report", expanded=False):
             st.markdown(PARAM_HELP["validation_classification_report"])
 
