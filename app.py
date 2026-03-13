@@ -467,27 +467,27 @@ def transform_data(X: pd.DataFrame, method: str) -> pd.DataFrame:
 
     Xt = X.copy()
 
-    if method == "LogNorm":
+    if method == "LogTransf":
         min_val = _min_nonzero_abs_div10(Xt)
         return Xt.apply(lambda col: metaboanalyst_log10(col, min_val), axis=0)
 
-    if method == "Log2Norm":
+    if method == "Log2Transf":
         min_val = _min_nonzero_abs_div10(Xt)
         return Xt.apply(lambda col: metaboanalyst_log2(col, min_val), axis=0)
 
-    if method == "SrNorm":
+    if method == "SqrTransf":
         min_val = _min_nonzero_abs_div10(Xt)
         return Xt.apply(lambda col: metaboanalyst_sqrt(col, min_val), axis=0)
 
-    if method == "CrNorm":
+    if method == "CrTransf":
         arr = np.abs(Xt.to_numpy(dtype=float)) ** (1.0 / 3.0)
         mask_neg = Xt.to_numpy(dtype=float) < 0
         arr[mask_neg] = -arr[mask_neg]
         return pd.DataFrame(arr, index=Xt.index, columns=Xt.columns)
 
-    if method == "VsnNorm":
+    if method == "VsnTransf":
         raise ValueError(
-            "Exact VsnNorm from MetaboAnalystR requires limma::normalizeVSN from R. "
+            "Exact VsnTransf from MetaboAnalystR requires limma::normalizeVSN from R. "
             "This Python-only app cannot reproduce it exactly without an R backend."
         )
 
@@ -575,9 +575,9 @@ Because analytical data are often:
 - dominated by very large peaks
 
 Examples:
-- **LogNorm / Log2Norm**: compress large values
-- **SrNorm**: square-root transform; milder than log
-- **CrNorm**: cube-root transform
+- **LogTransf / Log2Transf**: compress large values
+- **SqrTransf**: square-root transform; milder than log
+- **CrTransf**: cube-root transform
 
 Didactic note:
 Transformation mainly changes the **distribution shape**.
@@ -1099,11 +1099,11 @@ A useful mental model:
                 "Data transformation",
                 [
                     "None",
-                    "LogNorm",
-                    "Log2Norm",
-                    "SrNorm",
-                    "CrNorm",
-                    "VsnNorm",
+                    "LogTransf",
+                    "Log2Transf",
+                    "SqrTransf",
+                    "CrTransf",
+                    "VsnTransf",
                 ],
                 index=0,
                 help=PARAM_HELP["transform"],
