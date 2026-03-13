@@ -119,6 +119,15 @@ def impute_df_safe(
     X_imp_df = pd.DataFrame(X_imp, index=X2.index, columns=X2.columns)
     return X_imp_df, dropped
 
+    if strategy == "constant":
+        imp = SimpleImputer(strategy="constant", fill_value=fill_value)
+    else:
+        imp = SimpleImputer(strategy=strategy)
+
+    X_imp = imp.fit_transform(X2.values)
+    X_imp_df = pd.DataFrame(X_imp, index=X2.index, columns=X2.columns)
+    return X_imp_df, dropped
+
     imp = SimpleImputer(strategy=strategy)
     X_imp = imp.fit_transform(X2.values)
 
