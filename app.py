@@ -1072,7 +1072,7 @@ A useful mental model:
         
             missing_col_thresh = st.slider(
                 "Drop features with missing % above",
-                0, 100, 95,
+                0, 100, 90,
                 help=PARAM_HELP["missing_thresh"],
                 key="missing_col_thresh_preprocess",
             )
