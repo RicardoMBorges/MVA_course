@@ -854,9 +854,11 @@ with tabs[0]:
         df = APP.raw
         st.subheader("Preview")
         st.dataframe(df.head(50), use_container_width=True)
+        
         st.subheader("Shape")
         st.write(f"Rows: **{df.shape[0]}**")
         st.write(f"Cols: **{df.shape[1]}**")
+        
         st.subheader("Missingness report")
         rep = build_missing_report(df)
         st.dataframe(rep.head(30), use_container_width=True, height=420)
