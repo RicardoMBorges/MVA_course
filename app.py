@@ -513,6 +513,108 @@ def batch_align(X: pd.DataFrame, batch: Optional[pd.Series], method: str) -> pd.
 
     raise ValueError(f"Unknown alignment method: {method}")
 
+def _confidence_ellipse_from_scores(
+    x: np.ndarray,
+    y: np.ndarray,
+    level: float = 0.95,
+    n_points: int = 200,
+):
+    """
+    Returns x/y coordinates for a confidence ellipse based on the sample
+    covariance of two score vectors.
+
+    For 95% confidence in 2D, chi-square critical value = 5.991.
+    """
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+
+    mask = np.isfinite(x) & np.isfinite(y)
+    x = x[mask]
+    y = y[mask]
+
+    if x.size < 3:
+        return None, None
+
+    mean = np.array([x.mean(), y.mean()])
+    cov = np.cov(np.vstack([x, y]))
+
+    if cov.shape != (2, 2) or not np.all(np.isfinite(cov)):
+        return None, None
+
+    # chi-square critical values for 2D
+    chi2_map = {
+        0.90: 4.605,
+        0.95: 5.991,
+        0.99: 9.210,
+    }
+    chi2_val = chi2_map.get(level, 5.991)
+
+    eigvals, eigvecs = np.linalg.eigh(cov)
+    order = np.argsort(eigvals)[::-1]
+    eigvals = eigvals[order]
+    eigvecs = eigvecs[:, order]
+
+    if np.any(eigvals < 0):
+        return None, None
+
+    theta = np.linspace(0, 2 * np.pi, n_points)
+    circle = np.vstack([np.cos(theta), np.sin(theta)])
+
+    # scale by sqrt(eigenvalue * chi2)
+    radii = np.sqrt(eigvals * chi2_val)
+    ellipse = eigvecs @ np.diag(radii) @ circle
+
+    ex = ellipse[0, :] + mean[0]
+    ey = ellipse[1, :] + mean[1]
+    return ex, ey
+
+
+def add_confidence_ellipse_to_fig(
+    fig: go.Figure,
+    df_plot: pd.DataFrame,
+    x_col: str,
+    y_col: str,
+    group_col: Optional[str] = None,
+    level: float = 0.95,
+):
+    """
+    Adds one 95% confidence ellipse per group.
+    If group_col is None, adds one ellipse for all points together.
+    """
+    if group_col is None or group_col not in df_plot.columns:
+        ex, ey = _confidence_ellipse_from_scores(df_plot[x_col].values, df_plot[y_col].values, level=level)
+        if ex is not None:
+            fig.add_trace(
+                go.Scatter(
+                    x=ex,
+                    y=ey,
+                    mode="lines",
+                    name=f"{int(level*100)}% confidence",
+                    line=dict(width=2, dash="dash"),
+                    showlegend=True,
+                    hoverinfo="skip",
+                )
+            )
+        return fig
+
+    for grp in df_plot[group_col].dropna().astype(str).unique():
+        sub = df_plot[df_plot[group_col].astype(str) == grp]
+        ex, ey = _confidence_ellipse_from_scores(sub[x_col].values, sub[y_col].values, level=level)
+        if ex is not None:
+            fig.add_trace(
+                go.Scatter(
+                    x=ex,
+                    y=ey,
+                    mode="lines",
+                    name=f"{grp} — {int(level*100)}% confidence",
+                    line=dict(width=2, dash="dash"),
+                    showlegend=True,
+                    hoverinfo="skip",
+                )
+            )
+    return fig
+
+
 def didactic_help(title: str, key: str, expanded: bool = False):
     text = PARAM_HELP.get(key, "No help text available.")
     with st.expander(f"Help — {title}", expanded=expanded):
