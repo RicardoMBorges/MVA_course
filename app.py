@@ -3078,9 +3078,11 @@ with tabs[5]:
         # Confusion matrix
         # -------------------------
         st.divider()
+        st.subheader("Confusion matrix")
+     
         with st.expander("Help — How to read the confusion matrix", expanded=False):
             st.markdown(PARAM_HELP["validation_confusion_matrix"])
-        st.subheader("Confusion matrix")
+
 
         cm = confusion_matrix(y_true, y_pred, labels=classes)
         cm_df = pd.DataFrame(
