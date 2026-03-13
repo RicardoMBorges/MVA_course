@@ -2634,7 +2634,7 @@ with tabs[4]:
                 
                 | Q² value | Meaning |
                 |--------|--------|
-                | < 0 | model predicts worse than the mean (**overfitting** |
+                | < 0 | model predicts worse than the mean (**overfitting**) |
                 | 0 – 0.3 | weak predictive power |
                 | 0.3 – 0.5 | moderate predictive ability |
                 | > 0.5 | good predictive model |
