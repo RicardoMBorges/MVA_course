@@ -2735,7 +2735,6 @@ with tabs[4]:
 
             st.write("Classes:", list(model.classes_))
             st.write("n_samples:", X.shape[0], " | n_features:", X.shape[1])
-
             st.divider()
             st.subheader("Coefficients (feature importance proxy)")
             coef = model.coef_
@@ -2768,6 +2767,16 @@ with tabs[4]:
                 add_download_html_button(fig_coef, "Download HTML: feature strength", key)
                 figs_local[key] = fig_coef
 
+            APP.model_params = {
+                "model_kind": "Logistic Regression",
+                "C": float(C),
+                "max_iter": int(max_iter),
+                "solver": "lbfgs",
+                "n_samples": int(X.shape[0]),
+                "n_features": int(X.shape[1]),
+                "classes": list(model.classes_),
+            }
+     
         # =====================================================================
         # B) PLS-DA (PLSRegression on one-hot y)
         # =====================================================================
