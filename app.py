@@ -2629,31 +2629,15 @@ with tabs[4]:
                 3. Predictions are made on the left-out samples.
                 4. Prediction errors are accumulated.
                 
-                ### Formula
-                
-                Q² = 1 − (PRESS / TSS)
-                
-                where:
-                
-                - **PRESS** = predictive residual sum of squares (cross-validated errors)
-                - **TSS** = total sum of squares
                 
                 ### Interpretation
                 
                 | Q² value | Meaning |
                 |--------|--------|
-                | < 0 | model predicts worse than the mean |
+                | < 0 | model predicts worse than the mean (**overfitting** |
                 | 0 – 0.3 | weak predictive power |
                 | 0.3 – 0.5 | moderate predictive ability |
                 | > 0.5 | good predictive model |
-                
-                ### Important
-                
-                A good model should satisfy:
-                
-                R² − Q² < 0.3
-                
-                Otherwise the model may be **overfitting**.
                 """)
              
                 # -----------------------------
