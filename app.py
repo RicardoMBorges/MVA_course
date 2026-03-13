@@ -932,8 +932,12 @@ with tabs[0]:
             X_raw_df = X_raw_df[keep_cols]
 
             # Impute remaining NaNs (median per feature) -> still "raw" scale
-            imp = SimpleImputer(strategy="median")
-            X_raw_imp = imp.fit_transform(X_raw_df.values)
+            X_raw_imp_df, dropped_all_nan_raw = impute_df_safe(X_raw_df, strategy="median")
+
+            if dropped_all_nan_raw:
+                st.caption(f"Raw PCA: dropped {len(dropped_all_nan_raw)} all-NaN feature(s) before imputation.")
+            
+            X_raw_imp = X_raw_imp_df.values
 
             if X_raw_imp.shape[0] < 3 or X_raw_imp.shape[1] < 2:
                 st.warning("Not enough data for raw PCA (need >=3 samples and >=2 features).")
