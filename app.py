@@ -1353,12 +1353,11 @@ A useful mental model:
             X_scaled_df = _clean_data_like_metaboanalyst(X_scaled_df)
 
             # final imputation again because exact formulas can create NaN for zero-SD features
-            final_imp_scale = SimpleImputer(strategy="median")
-            X_scaled_df = pd.DataFrame(
-                final_imp_scale.fit_transform(X_scaled_df),
-                index=X_scaled_df.index,
-                columns=X_scaled_df.columns,
-            )
+            X_scaled_df, dropped_all_nan_scale = impute_df_safe(X_scaled_df, strategy="median")
+            if dropped_all_nan_scale:
+                st.warning(
+                    f"Dropped {len(dropped_all_nan_scale)} feature(s) that became entirely missing after scaling."
+                )
 
             if X_scaled_df.shape[1] != X_al_df.shape[1]:
                 st.warning(
