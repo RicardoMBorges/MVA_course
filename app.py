@@ -2305,13 +2305,14 @@ with tabs[3]:
                 }
          
             fig_scores = px.scatter(
-                scores_df,
-                x=pcx,
-                y=pcy,
-                color=color_by,
-                hover_data=hover_cols,
-                title=f"PCA Scores: {pcx} vs {pcy}",
-            )
+                    scores_df,
+                    x=pcx,
+                    y=pcy,
+                    color=color_by,
+                    hover_data=hover_cols,
+                    title=f"PCA Scores: {pcx} vs {pcy}",
+                    color_discrete_map=group_color_map if group_color_map is not None else None,
+                )
          
             fig_scores.update_traces(marker=dict(size=9, line=dict(width=0)))
 
