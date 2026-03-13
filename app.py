@@ -2615,7 +2615,7 @@ with tabs[4]:
                 # Q² (cross-validated predictive ability)
                 # -----------------------------
 
-                st.subheader("Cross-validated Q²")
+                st.subheader("Cross-validated Q²",help="THIS IS IT")
 
                 # CV parameters
                 cv_folds = st.slider(
