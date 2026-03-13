@@ -3297,6 +3297,16 @@ Next upgrades for this tab (recommended):
         else:
             st.info("No figures stored yet. Generate plots in previous tabs first.")
 
+    method_format = st.selectbox(
+    "Export analysis description",
+        [
+        "Pipeline summary (short)",
+        "Methods paragraph (paper ready)",
+        "Detailed report (full parameters)"
+        ]
+    )
+
+
 # -------------------------
 # 7) Univariate Analysis
 # -------------------------
