@@ -1325,12 +1325,11 @@ A useful mental model:
             X_al_df = _clean_data_like_metaboanalyst(X_al_df)
 
             # final imputation to guarantee PCA/models never see NaN
-            final_imp = SimpleImputer(strategy="median")
-            X_al_df = pd.DataFrame(
-                final_imp.fit_transform(X_al_df),
-                index=X_al_df.index,
-                columns=X_al_df.columns,
-            )
+            X_al_df, dropped_all_nan_post = impute_df_safe(X_al_df, strategy="median")
+            if dropped_all_nan_post:
+                st.warning(
+                    f"Dropped {len(dropped_all_nan_post)} feature(s) that became entirely missing after normalization/transformation/alignment."
+                )
 
             # 5) Drop zero-variance (AFTER final imputation is safest)
             if drop_zero_var:
