@@ -301,6 +301,8 @@ def quantile_normalize_rows(X: pd.DataFrame) -> pd.DataFrame:
     with np.errstate(invalid="ignore"):
         mean_sorted = np.nanmean(sorted_vals, axis=0)
 
+    mean_sorted = np.where(np.isfinite(mean_sorted), mean_sorted, 0.0)
+
     out = np.empty_like(A)
     np.put_along_axis(out, order, mean_sorted[None, :], axis=1)
 
