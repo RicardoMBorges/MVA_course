@@ -2324,6 +2324,7 @@ with tabs[3]:
                     y_col=pcy,
                     group_col=color_by,
                     level=0.95,
+                    color_map=group_color_map,
                 )
         
             fig_scores.update_layout(dragmode="zoom")
