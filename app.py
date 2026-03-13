@@ -1079,7 +1079,7 @@ A useful mental model:
 
         with c2:
             sample_norm = st.selectbox(
-                "Sample normalization (MetaboAnalystR names)",
+                "Sample normalization",
                 [
                     "None",
                     "QuantileNorm",
@@ -1096,7 +1096,7 @@ A useful mental model:
             )
 
             transform = st.selectbox(
-                "Data transformation (MetaboAnalystR names)",
+                "Data transformation",
                 [
                     "None",
                     "LogNorm",
@@ -1124,7 +1124,7 @@ A useful mental model:
             )
 
             scaling = st.selectbox(
-                "Scaling (MetaboAnalystR names)",
+                "Scaling",
                 ["None", "MeanCenter", "AutoScale", "ParetoScale", "RangeScale"],
                 index=2,
                 help=PARAM_HELP["scaling"],
