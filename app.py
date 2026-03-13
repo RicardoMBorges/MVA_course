@@ -2979,6 +2979,11 @@ with tabs[4]:
 # -------------------------
 with tabs[5]:
     st.header("5) Validation")
+    with st.expander("What is the purpose of validation?", expanded=False):
+        st.markdown(PARAM_HELP["validation_overview"])
+    
+    with st.expander("How does cross-validation work?", expanded=False):
+        st.markdown(PARAM_HELP["validation_cv_overview"])
 
     if APP.X_proc is None:
         st.info("Run preprocessing first.")
@@ -3009,6 +3014,10 @@ with tabs[5]:
         # -------------------------
         # CV controls
         # -------------------------
+        with st.expander("Help — Cross-validation settings", expanded=False):
+            st.markdown(PARAM_HELP["validation_cv_overview"])
+            st.markdown(PARAM_HELP["validation_repeats"])
+         
         st.subheader("Cross-validation")
 
         cv_folds = st.slider(
@@ -3060,11 +3069,17 @@ with tabs[5]:
         bacc = balanced_accuracy_score(y_true, y_pred)
         st.write(f"Accuracy: **{acc:.3f}**")
         st.write(f"Balanced accuracy: **{bacc:.3f}**")
+        with st.expander("Help — Accuracy vs Balanced Accuracy", expanded=False):
+            st.markdown(PARAM_HELP["validation_accuracy"])
+            st.markdown("---")
+            st.markdown(PARAM_HELP["validation_balanced_accuracy"])
 
         # -------------------------
         # Confusion matrix
         # -------------------------
         st.divider()
+        with st.expander("Help — How to read the confusion matrix", expanded=False):
+            st.markdown(PARAM_HELP["validation_confusion_matrix"])
         st.subheader("Confusion matrix")
 
         cm = confusion_matrix(y_true, y_pred, labels=classes)
@@ -3082,6 +3097,8 @@ with tabs[5]:
         # ROC (binary only)
         # -------------------------
         st.divider()
+        with st.expander("Help — ROC curve and AUC", expanded=False):
+            st.markdown(PARAM_HELP["validation_roc"])
         st.subheader("ROC (binary only)")
 
         figs_local = {"validation_confusion_matrix": fig_cm}
