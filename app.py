@@ -1139,7 +1139,6 @@ A useful mental model:
                 "Drop zero-variance features",
                 value=True,
                 help=PARAM_HELP["drop_zero_var"],
-                key="scaling_preprocess",
                 key="drop_zero_var_preprocess",
             )
 
