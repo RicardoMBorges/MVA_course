@@ -3123,6 +3123,8 @@ with tabs[5]:
                 if proba.shape[1] != len(proba_classes):
                     st.warning("ROC skipped: probability output shape does not match class list.")
                 else:
+                    with st.expander("Help — Choosing the positive class", expanded=False):
+                        st.markdown(PARAM_HELP["validation_positive_class"])
                     pos_label = st.selectbox(
                         "Positive class",
                         options=list(proba_classes),
@@ -3172,6 +3174,8 @@ with tabs[5]:
         # Text report
         # -------------------------
         st.divider()
+        with st.expander("Help — Classification report", expanded=False):
+            st.markdown(PARAM_HELP["validation_classification_report"])
         st.subheader("Classification report (text)")
         st.code(classification_report(y_true, y_pred), language="text")
 
