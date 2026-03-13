@@ -578,24 +578,60 @@ def add_confidence_ellipse_to_fig(
     level: float = 0.95,
 ):
     """
-    Adds one 95% confidence ellipse per group.
-    If group_col is None, adds one ellipse for all points together.
+    Adds filled 95% confidence regions (ellipse) to PCA plots.
     """
+
     if group_col is None or group_col not in df_plot.columns:
-        ex, ey = _confidence_ellipse_from_scores(df_plot[x_col].values, df_plot[y_col].values, level=level)
+        ex, ey = _confidence_ellipse_from_scores(
+            df_plot[x_col].values,
+            df_plot[y_col].values,
+            level=level
+        )
+
         if ex is not None:
             fig.add_trace(
                 go.Scatter(
                     x=ex,
                     y=ey,
                     mode="lines",
+                    line=dict(width=0),
+                    fill="toself",
+                    fillcolor="rgba(100,100,200,0.15)",
                     name=f"{int(level*100)}% confidence",
-                    line=dict(width=2, dash="dash"),
-                    showlegend=True,
                     hoverinfo="skip",
                 )
             )
         return fig
+
+    # One ellipse per group
+    groups = df_plot[group_col].dropna().astype(str).unique()
+
+    for grp in groups:
+        sub = df_plot[df_plot[group_col].astype(str) == grp]
+
+        ex, ey = _confidence_ellipse_from_scores(
+            sub[x_col].values,
+            sub[y_col].values,
+            level=level
+        )
+
+        if ex is None:
+            continue
+
+        fig.add_trace(
+            go.Scatter(
+                x=ex,
+                y=ey,
+                mode="lines",
+                line=dict(width=0),
+                fill="toself",
+                fillcolor="rgba(100,100,200,0.15)",
+                name=f"{grp} — {int(level*100)}%",
+                hoverinfo="skip",
+            )
+        )
+
+    return fig
 
     for grp in df_plot[group_col].dropna().astype(str).unique():
         sub = df_plot[df_plot[group_col].astype(str) == grp]
