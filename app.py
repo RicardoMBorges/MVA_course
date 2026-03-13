@@ -3296,3 +3296,218 @@ Next upgrades for this tab (recommended):
             )
         else:
             st.info("No figures stored yet. Generate plots in previous tabs first.")
+
+# -------------------------
+# 7) Univariate Analysis
+# -------------------------
+with tabs[7]:
+    st.header("7) Univariate Analysis")
+
+    with st.expander("What is univariate analysis?", expanded=False):
+        st.markdown(PARAM_HELP["univariate_overview"])
+
+    if APP.X_proc is None or APP.feature_names is None:
+        st.info("Run preprocessing first.")
+    elif APP.y_raw is None:
+        st.warning("A group/class column is required for univariate comparison.")
+    else:
+        y_ser = APP.y_raw.copy()
+        mask = ~pd.isna(y_ser)
+        y = y_ser[mask].astype(str).reset_index(drop=True)
+
+        X_df = pd.DataFrame(
+            APP.X_proc[mask.values, :],
+            columns=APP.feature_names
+        ).reset_index(drop=True)
+
+        # Build working dataframe
+        uni_df = X_df.copy()
+        uni_df["Group"] = y.values
+
+        if APP.id_col and APP.raw is not None and APP.id_col in APP.raw.columns:
+            uni_df["SampleID"] = APP.raw.loc[mask.values, APP.id_col].astype(str).values
+        else:
+            uni_df["SampleID"] = [f"Sample_{i+1}" for i in range(len(uni_df))]
+
+        st.subheader("Feature selection")
+
+        c1, c2 = st.columns(2)
+
+        with c1:
+            feature_order_mode = st.selectbox(
+                "Order features by",
+                ["Alphabetical", "VIP (if available)"],
+                index=1 if APP.vip_df is not None else 0,
+            )
+
+        with c2:
+            top_n_candidates = st.slider(
+                "Number of candidate features to show",
+                min_value=5,
+                max_value=min(200, len(APP.feature_names)),
+                value=min(30, len(APP.feature_names)),
+                step=5,
+            )
+
+        feature_options = APP.feature_names.copy()
+
+        if feature_order_mode == "VIP (if available)" and APP.vip_df is not None:
+            with st.expander("Help — VIP-based feature ranking", expanded=False):
+                st.markdown(PARAM_HELP["vip_univariate_help"])
+
+            vip_features = APP.vip_df["feature"].tolist()
+            feature_options = [f for f in vip_features if f in APP.feature_names][:top_n_candidates]
+        else:
+            feature_options = sorted(APP.feature_names)[:top_n_candidates]
+
+        selected_features = st.multiselect(
+            "Select features for univariate analysis",
+            options=feature_options,
+            default=feature_options[:min(3, len(feature_options))],
+        )
+
+        if not selected_features:
+            st.info("Select at least one feature.")
+            st.stop()
+
+        st.divider()
+        st.subheader("Plot settings")
+
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            plot_points = st.checkbox("Show individual points", value=True)
+        with c2:
+            use_box = st.checkbox("Show boxplot", value=True)
+        with c3:
+            use_log_y = st.checkbox("Log Y axis", value=False)
+
+        figs_local = {}
+
+        for feat in selected_features:
+            st.divider()
+            st.subheader(f"Feature: {feat}")
+
+            df_feat = uni_df[["Group", "SampleID", feat]].copy()
+            df_feat = df_feat.rename(columns={feat: "Value"})
+            df_feat = df_feat[np.isfinite(df_feat["Value"])]
+
+            if df_feat.empty:
+                st.warning(f"No valid numeric data for {feat}.")
+                continue
+
+            # summary table
+            summary_df = (
+                df_feat.groupby("Group")["Value"]
+                .agg(["count", "mean", "std", "median", "min", "max"])
+                .reset_index()
+            )
+
+            c1, c2 = st.columns([2, 1])
+
+            with c1:
+                fig = go.Figure()
+
+                groups_sorted = sorted(df_feat["Group"].astype(str).unique().tolist())
+                palette = px.colors.qualitative.Plotly
+                group_color_map = {
+                    grp: palette[i % len(palette)]
+                    for i, grp in enumerate(groups_sorted)
+                }
+
+                if use_box:
+                    for grp in groups_sorted:
+                        sub = df_feat[df_feat["Group"] == grp]
+                        fig.add_trace(
+                            go.Box(
+                                x=sub["Group"],
+                                y=sub["Value"],
+                                name=str(grp),
+                                marker_color=group_color_map[grp],
+                                boxpoints=False,
+                                showlegend=False,
+                            )
+                        )
+
+                if plot_points:
+                    fig_points = px.strip(
+                        df_feat,
+                        x="Group",
+                        y="Value",
+                        color="Group",
+                        hover_data=["SampleID"],
+                        color_discrete_map=group_color_map,
+                    )
+                    for tr in fig_points.data:
+                        tr.showlegend = False
+                        fig.add_trace(tr)
+
+                fig.update_layout(
+                    title=f"Boxplot / group comparison — {feat}",
+                    xaxis_title="Group",
+                    yaxis_title=feat,
+                    dragmode="zoom",
+                )
+
+                if use_log_y:
+                    fig.update_yaxes(type="log")
+
+                st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
+
+                key = f"univariate_boxplot_{feat}"
+                store_fig(key, fig)
+                add_download_html_button(fig, f"Download HTML: {feat}", key)
+                figs_local[key] = fig
+
+            with c2:
+                st.write("Group summary")
+                st.dataframe(summary_df, use_container_width=True)
+
+            # statistical tests
+            st.markdown("**Statistical test**")
+
+            groups_data = [
+                df_feat.loc[df_feat["Group"] == grp, "Value"].dropna().values
+                for grp in groups_sorted
+            ]
+            groups_data = [g for g in groups_data if len(g) > 0]
+
+            if len(groups_data) >= 2:
+                with st.expander("Help — ANOVA and t-test", expanded=False):
+                    st.markdown(PARAM_HELP["anova_help"])
+                    st.markdown("---")
+                    st.markdown(PARAM_HELP["ttest_help"])
+
+                if len(groups_sorted) == 2:
+                    g1, g2 = groups_sorted[0], groups_sorted[1]
+                    x1 = df_feat.loc[df_feat["Group"] == g1, "Value"].dropna().values
+                    x2 = df_feat.loc[df_feat["Group"] == g2, "Value"].dropna().values
+
+                    if len(x1) >= 2 and len(x2) >= 2:
+                        t_stat, p_val = stats.ttest_ind(x1, x2, equal_var=False, nan_policy="omit")
+                        st.write(f"Welch t-test: **t = {t_stat:.4f}**, **p = {p_val:.4e}**")
+                    else:
+                        st.info("Not enough observations in one of the two groups for t-test.")
+
+                if len(groups_sorted) >= 3:
+                    enough_groups = all(len(g) >= 2 for g in groups_data)
+                    if enough_groups:
+                        f_stat, p_val = stats.f_oneway(*groups_data)
+                        st.write(f"One-way ANOVA: **F = {f_stat:.4f}**, **p = {p_val:.4e}**")
+                    else:
+                        st.info("At least one group has too few values for ANOVA.")
+            else:
+                st.info("At least two groups are needed.")
+
+            # optional raw table
+            with st.expander(f"Show raw values for {feat}", expanded=False):
+                st.dataframe(df_feat, use_container_width=True)
+
+        if figs_local:
+            st.divider()
+            st.download_button(
+                "Download ALL Univariate plots (ZIP of HTML)",
+                data=zip_html(figs_local),
+                file_name="univariate_plots_html.zip",
+                mime="application/zip",
+                use_container_width=True,
+            )
