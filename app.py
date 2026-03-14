@@ -2088,139 +2088,261 @@ A useful mental model:
 
             figs_local = {}
 
-        # ======================================================
-        # A) DISTRIBUTION FOR EVERY SAMPLE (across features)
-        # ======================================================
-        if show_preprocess_plots:
-            with st.expander("Distributions: EVERY SAMPLE (across features) — raw vs processed", expanded=False):
-                st.caption(
-                    "For each sample, we pool all feature values and compare RAW vs PROCESSED distributions. "
-                    "This is the main visual check for sample-wise normalization effects."
+            with st.expander("What should be checked in the normalization plots?", expanded=False):
+                st.markdown("""
+### Normalization check
+
+These plots help verify whether samples became more comparable after normalization.
+
+#### 1. Total signal per sample
+Check whether large differences in total signal were reduced.
+This is especially important for methods such as SumNorm.
+
+#### 2. Median signal per sample
+Check whether sample medians became more aligned.
+This is especially useful for MedianNorm and for general sample comparability.
+
+#### 3. RLE boxplots
+RLE = Relative Log Expression.
+
+After good normalization:
+- sample medians should be closer to zero
+- distributions should have more similar widths
+- no sample should remain strongly shifted from the others
+
+#### 4. ECDF curves
+These curves show whether sample-wise value distributions became more similar after normalization.
+
+### Interpretation
+Good normalization usually makes samples more comparable without destroying biological variation.
+If one sample remains strongly different from the rest, it may indicate:
+- technical artifact
+- failed injection
+- strong batch effect
+- real biological outlier
+                """)
+
+            st.subheader("Normalization-focused diagnostic plots")
+
+            feat_labels = APP.feature_names
+
+            if APP.X_proc.shape[1] != len(feat_labels):
+                st.error(
+                    f"Internal mismatch: X_proc has {APP.X_proc.shape[1]} columns "
+                    f"but feature_names has {len(feat_labels)} names. Please run preprocessing again."
                 )
+                st.stop()
 
-                feat_labels = APP.feature_names
+            raw_mat = _as_numeric_df(APP.X_raw.copy()).reindex(columns=feat_labels)
+            proc_mat = pd.DataFrame(APP.X_proc, index=raw_mat.index, columns=feat_labels)
 
-                if APP.X_proc.shape[1] != len(feat_labels):
-                    st.error(
-                        f"Internal mismatch: X_proc has {APP.X_proc.shape[1]} columns "
-                        f"but feature_names has {len(feat_labels)} names. Please run preprocessing again."
+            if APP.id_col and APP.id_col in df_full.columns:
+                sample_names_all = df_full[APP.id_col].astype(str).tolist()
+            else:
+                sample_names_all = [f"Sample_{i}" for i in range(raw_mat.shape[0])]
+
+            raw_mat.index = sample_names_all
+            proc_mat.index = sample_names_all
+
+            if raw_mat.shape[0] < 1 or raw_mat.shape[1] < 2:
+                st.warning("Not enough samples or features to generate normalization diagnostics.")
+            else:
+                # ---------------------------------------
+                # Speed control
+                # ---------------------------------------
+                n_feats_total = int(len(feat_labels))
+                if fast_mode:
+                    max_feat_allowed = min(1000, n_feats_total)
+                    default_feat = min(200, max_feat_allowed)
+                else:
+                    max_feat_allowed = min(5000, n_feats_total)
+                    default_feat = min(1000, max_feat_allowed)
+
+                if max_feat_allowed >= 2:
+                    max_feat = st.slider(
+                        "Max features used in normalization diagnostics",
+                        min_value=2,
+                        max_value=max_feat_allowed,
+                        value=default_feat,
+                        step=10 if max_feat_allowed >= 20 else 1,
+                        help="Limits the number of feature columns used to keep plots responsive.",
+                        key="norm_diag_maxfeat",
                     )
-                    st.stop()
-
-                raw_mat = _as_numeric_df(APP.X_raw.copy()).reindex(columns=feat_labels)
-                proc_mat = pd.DataFrame(APP.X_proc, index=raw_mat.index, columns=feat_labels)
-
-                if APP.id_col and APP.id_col in df_full.columns:
-                    sample_names_all = df_full[APP.id_col].astype(str).tolist()
                 else:
-                    sample_names_all = [f"Sample_{i}" for i in range(raw_mat.shape[0])]
+                    max_feat = max_feat_allowed
 
-                n_feats = int(len(feat_labels))
-                if n_feats < 2:
-                    st.warning("Not enough features to plot sample distributions.")
-                else:
-                    min_feat = 2
-                    max_feat_allowed = min(5000, n_feats)
-                    default_feat = min(50, max_feat_allowed)
+                feat_use = feat_labels[:max_feat]
+                raw_submat = raw_mat[feat_use].copy()
+                proc_submat = proc_mat[feat_use].copy()
 
-                    if min_feat == max_feat_allowed:
-                        max_feat = max_feat_allowed
-                        st.caption(f"Max features used: {max_feat} (only option)")
-                    else:
-                        step_feat = 20 if (max_feat_allowed - min_feat) >= 20 else 1
-                        max_feat = st.slider(
-                            "Max features used for sample distributions (speed control)",
-                            min_value=min_feat,
-                            max_value=max_feat_allowed,
-                            value=default_feat,
-                            step=step_feat,
-                            help="This limits how many feature columns are pooled within each sample.",
-                            key="sample_overlay_maxfeat",
-                        )
+                # ---------------------------------------
+                # A) Total signal and median signal
+                # ---------------------------------------
+                c_norm1, c_norm2 = st.columns(2)
 
-                    feat_use = feat_labels[:max_feat]
+                with c_norm1:
+                    total_df = pd.DataFrame({
+                        "Sample": sample_names_all * 2,
+                        "Stage": ["Raw"] * len(sample_names_all) + ["Processed"] * len(sample_names_all),
+                        "TotalSignal": np.concatenate([
+                            raw_submat.sum(axis=1, skipna=True).values,
+                            proc_submat.sum(axis=1, skipna=True).values
+                        ])
+                    })
 
-                    n_samples = int(raw_mat.shape[0])
-                    if n_samples < 1:
-                        st.warning("No samples available.")
-                    else:
-                        default_samples = sample_names_all[: min(12, len(sample_names_all))]
-                        sample_pick = st.multiselect(
-                            "Samples to show",
-                            options=sample_names_all,
-                            default=default_samples,
-                            key="sample_overlay_pick",
-                        )
+                    fig_total = px.bar(
+                        total_df,
+                        x="Sample",
+                        y="TotalSignal",
+                        color="Stage",
+                        barmode="group",
+                        title="Normalization check — total signal per sample",
+                    )
+                    fig_total.update_layout(height=450, dragmode="zoom")
+                    fig_total.update_xaxes(tickangle=90)
+                    st.plotly_chart(fig_total, use_container_width=True, config={"displaylogo": False})
+                    key_total = "normcheck_total_signal"
+                    store_fig(key_total, fig_total)
+                    add_download_html_button(fig_total, "Download HTML: total signal", key_total)
+                    figs_local[key_total] = fig_total
 
-                        if not sample_pick:
-                            st.info("Select at least one sample.")
+                with c_norm2:
+                    median_df = pd.DataFrame({
+                        "Sample": sample_names_all * 2,
+                        "Stage": ["Raw"] * len(sample_names_all) + ["Processed"] * len(sample_names_all),
+                        "MedianSignal": np.concatenate([
+                            raw_submat.median(axis=1, skipna=True).values,
+                            proc_submat.median(axis=1, skipna=True).values
+                        ])
+                    })
+
+                    fig_median = px.bar(
+                        median_df,
+                        x="Sample",
+                        y="MedianSignal",
+                        color="Stage",
+                        barmode="group",
+                        title="Normalization check — median signal per sample",
+                    )
+                    fig_median.update_layout(height=450, dragmode="zoom")
+                    fig_median.update_xaxes(tickangle=90)
+                    st.plotly_chart(fig_median, use_container_width=True, config={"displaylogo": False})
+                    key_median = "normcheck_median_signal"
+                    store_fig(key_median, fig_median)
+                    add_download_html_button(fig_median, "Download HTML: median signal", key_median)
+                    figs_local[key_median] = fig_median
+
+                # ---------------------------------------
+                # B) RLE boxplots
+                # ---------------------------------------
+                with st.expander("RLE boxplots", expanded=True):
+                    raw_rle = raw_submat.subtract(raw_submat.median(axis=0, skipna=True), axis=1)
+                    proc_rle = proc_submat.subtract(proc_submat.median(axis=0, skipna=True), axis=1)
+
+                    raw_rle_long = raw_rle.reset_index().melt(
+                        id_vars="index",
+                        var_name="Feature",
+                        value_name="RLE"
+                    )
+                    raw_rle_long["Stage"] = "Raw"
+                    raw_rle_long = raw_rle_long.rename(columns={"index": "Sample"})
+
+                    proc_rle_long = proc_rle.reset_index().melt(
+                        id_vars="index",
+                        var_name="Feature",
+                        value_name="RLE"
+                    )
+                    proc_rle_long["Stage"] = "Processed"
+                    proc_rle_long = proc_rle_long.rename(columns={"index": "Sample"})
+
+                    rle_long = pd.concat([raw_rle_long, proc_rle_long], ignore_index=True)
+                    rle_long = rle_long[np.isfinite(rle_long["RLE"])]
+
+                    fig_rle = px.box(
+                        rle_long,
+                        x="Sample",
+                        y="RLE",
+                        color="Stage",
+                        facet_row="Stage",
+                        points=False,
+                        title="Normalization check — RLE boxplots",
+                    )
+                    fig_rle.update_layout(height=700, dragmode="zoom")
+                    fig_rle.update_xaxes(tickangle=90)
+                    st.plotly_chart(fig_rle, use_container_width=True, config={"displaylogo": False})
+                    key_rle = "normcheck_rle"
+                    store_fig(key_rle, fig_rle)
+                    add_download_html_button(fig_rle, "Download HTML: RLE boxplots", key_rle)
+                    figs_local[key_rle] = fig_rle
+
+                # ---------------------------------------
+                # C) ECDF curves by sample
+                # ---------------------------------------
+                with st.expander("ECDF curves by sample", expanded=False):
+                    default_samples = sample_names_all[:min(8, len(sample_names_all))]
+                    sample_pick = st.multiselect(
+                        "Samples for ECDF comparison",
+                        options=sample_names_all,
+                        default=default_samples,
+                        key="normcheck_ecdf_samples",
+                    )
+
+                    if sample_pick:
+                        ecdf_frames = []
+                        for s in sample_pick:
+                            raw_vals = raw_submat.loc[s].dropna().values
+                            proc_vals = proc_submat.loc[s].dropna().values
+
+                            if len(raw_vals) > 0:
+                                ecdf_frames.append(pd.DataFrame({
+                                    "Value": np.sort(raw_vals),
+                                    "ECDF": np.linspace(0, 1, len(raw_vals)),
+                                    "Sample": s,
+                                    "Stage": "Raw",
+                                }))
+
+                            if len(proc_vals) > 0:
+                                ecdf_frames.append(pd.DataFrame({
+                                    "Value": np.sort(proc_vals),
+                                    "ECDF": np.linspace(0, 1, len(proc_vals)),
+                                    "Sample": s,
+                                    "Stage": "Processed",
+                                }))
+
+                        if ecdf_frames:
+                            ecdf_df = pd.concat(ecdf_frames, ignore_index=True)
+
+                            fig_ecdf = px.line(
+                                ecdf_df,
+                                x="Value",
+                                y="ECDF",
+                                color="Sample",
+                                facet_col="Stage",
+                                title="Normalization check — ECDF by sample",
+                            )
+                            fig_ecdf.update_layout(height=500, dragmode="zoom")
+                            st.plotly_chart(fig_ecdf, use_container_width=True, config={"displaylogo": False})
+                            key_ecdf = "normcheck_ecdf"
+                            store_fig(key_ecdf, fig_ecdf)
+                            add_download_html_button(fig_ecdf, "Download HTML: ECDF curves", key_ecdf)
+                            figs_local[key_ecdf] = fig_ecdf
                         else:
-                            idx_use = [i for i, s in enumerate(sample_names_all) if s in sample_pick]
+                            st.info("Selected samples do not contain enough finite values for ECDF plotting.")
+                    else:
+                        st.info("Select at least one sample for ECDF comparison.")
 
-                            raw_sub = raw_mat.iloc[idx_use][feat_use]
-                            proc_sub = proc_mat.iloc[idx_use][feat_use]
-
-                            raw_long = pd.DataFrame(
-                                {
-                                    "value": raw_sub.to_numpy().ravel(),
-                                    "sample": np.repeat([sample_names_all[i] for i in idx_use], len(feat_use)),
-                                    "stage": "raw",
-                                }
-                            )
-
-                            proc_long = pd.DataFrame(
-                                {
-                                    "value": proc_sub.to_numpy().ravel(),
-                                    "sample": np.repeat([sample_names_all[i] for i in idx_use], len(feat_use)),
-                                    "stage": "processed",
-                                }
-                            )
-
-                            df_long = pd.concat([raw_long, proc_long], ignore_index=True)
-                            df_long = df_long[np.isfinite(df_long["value"].values)]
-
-                            plot_kind = st.radio(
-                                "Plot type",
-                                ["Histogram", "Violin"],
-                                horizontal=True,
-                                key="sample_overlay_plotkind",
-                            )
-
-                            if plot_kind == "Histogram":
-                                nbins = st.slider("Bins", 20, 200, 80, key="sample_overlay_bins")
-
-                                fig = px.histogram(
-                                    df_long,
-                                    x="value",
-                                    color="sample",
-                                    facet_col="stage",
-                                    barmode="overlay",
-                                    nbins=nbins,
-                                    histnorm="probability density",
-                                    title="Sample-wise distributions (across features): RAW vs PROCESSED",
-                                )
-                                fig.update_layout(dragmode="zoom", height=520)
-                                fig.update_traces(opacity=0.45)
-
-                            else:
-                                fig = px.violin(
-                                    df_long,
-                                    x="sample",
-                                    y="value",
-                                    color="sample",
-                                    facet_col="stage",
-                                    box=True,
-                                    points=False,
-                                    title="Sample-wise distributions (across features): RAW vs PROCESSED",
-                                )
-                                fig.update_layout(dragmode="zoom", height=520)
-
-                            st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
-                            key = "preprocess_sample_overlay_raw_vs_processed"
-                            store_fig(key, fig)
-                            add_download_html_button(fig, "Download HTML: sample distributions (raw vs processed)", key)
-                            figs_local[key] = fig
-
+                # ---------------------------------------
+                # D) Optional ZIP export
+                # ---------------------------------------
+                if figs_local:
+                    st.download_button(
+                        "Download normalization diagnostic plots (ZIP)",
+                        data=zip_html(figs_local),
+                        file_name="normalization_diagnostic_plots.zip",
+                        mime="application/zip",
+                        use_container_width=True,
+                        key="dl_normcheck_zip",
+                    )
 
 # -------------------------
 # 2.5) Pre-PCA Projection (didactic)
