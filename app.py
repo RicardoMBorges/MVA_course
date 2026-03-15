@@ -2102,17 +2102,6 @@ This is especially important for methods such as SumNorm.
 Check whether sample medians became more aligned.
 This is especially useful for MedianNorm and for general sample comparability.
 
-#### 3. RLE boxplots
-RLE = Relative Log Expression.
-
-After good normalization:
-- sample medians should be closer to zero
-- distributions should have more similar widths
-- no sample should remain strongly shifted from the others
-
-#### 4. ECDF curves
-These curves show whether sample-wise value distributions became more similar after normalization.
-
 ### Interpretation
 Good normalization usually makes samples more comparable without destroying biological variation.
 If one sample remains strongly different from the rest, it may indicate:
@@ -2236,6 +2225,35 @@ If one sample remains strongly different from the rest, it may indicate:
                 # B) RLE boxplots
                 # ---------------------------------------
                 with st.expander("RLE boxplots", expanded=True):
+
+
+                    with st.expander("What should be checked in the normalization plots?", expanded=False):
+                        st.markdown("""
+        ### Normalization check
+
+        #### 3. RLE boxplots
+        RLE = Relative Log Expression.
+
+        After good normalization:
+        - sample medians should be closer to zero
+        - distributions should have more similar widths
+        - no sample should remain strongly shifted from the others
+
+        ### Interpretation
+        Good normalization usually makes samples more comparable without destroying biological variation.
+        If one sample remains strongly different from the rest, it may indicate:
+        - technical artifact
+        - failed injection
+        - strong batch effect
+        - real biological outlier
+                        """)
+
+
+
+
+
+
+
                     raw_rle = raw_submat.subtract(raw_submat.median(axis=0, skipna=True), axis=1)
                     proc_rle = proc_submat.subtract(proc_submat.median(axis=0, skipna=True), axis=1)
 
@@ -2279,6 +2297,33 @@ If one sample remains strongly different from the rest, it may indicate:
                 # C) ECDF curves by sample
                 # ---------------------------------------
                 with st.expander("ECDF curves by sample", expanded=False):
+
+
+
+
+                    with st.expander("What should be checked in the normalization plots?", expanded=False):
+                        st.markdown("""
+        ### Normalization check
+
+        #### 4. ECDF curves
+        These curves show whether sample-wise value distributions became more similar after normalization.
+
+        ### Interpretation
+        Good normalization usually makes samples more comparable without destroying biological variation.
+        If one sample remains strongly different from the rest, it may indicate:
+        - technical artifact
+        - failed injection
+        - strong batch effect
+        - real biological outlier
+                        """)
+
+
+
+
+
+
+
+
                     default_samples = sample_names_all[:min(8, len(sample_names_all))]
                     sample_pick = st.multiselect(
                         "Samples for ECDF comparison",
