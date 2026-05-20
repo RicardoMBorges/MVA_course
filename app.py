@@ -2986,12 +2986,12 @@ with tabs[4]:
     elif APP.y_raw is None:
         st.warning("No target y selected. Choose a categorical target column in the sidebar to model.")
     else:
-        y_ser = APP.y_raw
+        y_ser = pd.Series(APP.y_raw).reset_index(drop=True)
 
         # basic cleanup: drop missing y
-        mask = ~pd.isna(y_ser)
-        X = APP.X_proc[mask.values, :]
-        y = y_ser[mask].astype(str).values
+        mask = (~pd.isna(y_ser)).to_numpy(dtype=bool)
+        X = np.asarray(APP.X_proc, dtype=float)[mask, :]
+        y = y_ser.loc[mask].astype(str).to_numpy(dtype=str)
 
         # --- determine max folds allowed (useful later / consistency) ---
         class_counts = pd.Series(y).value_counts()
@@ -3409,10 +3409,12 @@ with tabs[5]:
         # -------------------------
         # Data
         # -------------------------
-        y_ser = APP.y_raw
-        mask = ~pd.isna(y_ser)
-        X = APP.X_proc[mask.values, :]
-        y = y_ser[mask].astype(str).values
+        y_ser = pd.Series(APP.y_raw).reset_index(drop=True)
+
+        # Force NumPy arrays; avoids Pandas/Arrow indexing errors in scikit-learn CV
+        mask = (~pd.isna(y_ser)).to_numpy(dtype=bool)
+        X = np.asarray(APP.X_proc, dtype=float)[mask, :]
+        y = y_ser.loc[mask].astype(str).to_numpy(dtype=str)
 
         # Stable class order
         classes = np.array(sorted(pd.unique(y).tolist()))
