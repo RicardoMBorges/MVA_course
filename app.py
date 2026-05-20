@@ -3129,6 +3129,7 @@ with tabs[4]:
             if APP.raw is not None and APP.id_col and APP.id_col in APP.raw.columns:
                 # Align indices: use same mask used above
                 sample_ids = APP.raw.loc[mask.values, APP.id_col].astype(str).values
+                sample_ids = (APP.raw.reset_index(drop=True).loc[mask, APP.id_col].astype(str).to_numpy())
                 scores_df[APP.id_col] = sample_ids
 
             hover_cols = [c for c in scores_df.columns if c not in [f"LV{i+1}" for i in range(n_comp)]]
