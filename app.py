@@ -3641,7 +3641,7 @@ with tabs[6]:
         uni_df["Group"] = y.values
 
         if APP.id_col and APP.raw is not None and APP.id_col in APP.raw.columns:
-            uni_df["SampleID"] = APP.raw.loc[mask.values, APP.id_col].astype(str).values
+            uni_df["SampleID"] = (APP.raw.reset_index(drop=True).loc[mask, APP.id_col].astype(str).to_numpy())
         else:
             uni_df["SampleID"] = [f"Sample_{i+1}" for i in range(len(uni_df))]
 
