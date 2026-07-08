@@ -54,10 +54,22 @@ for logo_name in ["LAABio.png"]: #"logo_massQL.png",
         pass
 
 st.sidebar.divider()
+
+st.sidebar.markdown("### 🌐 Language / Idioma")
+
+c1, c2 = st.sidebar.columns(2)
+
+with c1:
+    st.sidebar.link_button("🇧🇷 Português", "https://mva-course-br.streamlit.app/")
+
+with c2:
+    st.sidebar.link_button("🇺🇸 English", "https://mva-course.streamlit.app/")
+    
+st.sidebar.divider()
+
 if st.sidebar.button("🧹 Clear stored figures"):
     st.session_state["figs"] = {}
     st.sidebar.success("Stored figures cleared.")
-    
 
 # -------------------------
 # Helpers
@@ -948,438 +960,600 @@ def build_detailed_report(app: AppData) -> str:
 
     return "\n".join(lines)
 
+
+# -------------------------
+# MGF filtering helpers
+# -------------------------
+def _normalize_feature_token(x) -> str:
+    """Normalize feature identifiers for robust matching between VIP table and MGF metadata."""
+    s = str(x).strip()
+    if not s:
+        return ""
+    # common MZmine/GNPS exports may store integer IDs as 123 or 123.0
+    try:
+        f = float(s)
+        if np.isfinite(f) and f.is_integer():
+            return str(int(f))
+    except Exception:
+        pass
+    return s
+
+
+def _feature_token_variants(x) -> set:
+    """Generate conservative variants for IDs such as Feature_123, feature 123, 123.0."""
+    s = str(x).strip()
+    vals = {s, _normalize_feature_token(s)}
+
+    # If the feature name contains a final integer, also try that integer alone.
+    import re
+    m = re.search(r"(\d+)(?:\.0)?$", s)
+    if m:
+        vals.add(m.group(1))
+
+    # If the feature name is like Feature_123, MGF may contain FEATURE_ID=123.
+    for prefix in ["Feature_", "feature_", "Feature ", "feature "]:
+        if s.startswith(prefix):
+            vals.add(_normalize_feature_token(s.replace(prefix, "", 1)))
+
+    return {v for v in vals if v}
+
+
+def parse_mgf_records(mgf_text: str) -> List[Dict]:
+    """Parse an MGF file into ion records while preserving the original text block."""
+    records = []
+    current = []
+    in_block = False
+
+    for line in mgf_text.splitlines():
+        stripped = line.strip()
+        if stripped.upper() == "BEGIN IONS":
+            current = [line]
+            in_block = True
+            continue
+
+        if in_block:
+            current.append(line)
+            if stripped.upper() == "END IONS":
+                block_text = "\n".join(current).rstrip() + "\n"
+                meta = {}
+                for raw_line in current:
+                    if "=" in raw_line:
+                        k, v = raw_line.split("=", 1)
+                        meta[k.strip().upper()] = v.strip()
+                records.append({"text": block_text, "meta": meta})
+                current = []
+                in_block = False
+
+    return records
+
+
+def mgf_record_tokens(record: Dict, selected_fields: Optional[List[str]] = None) -> set:
+    """Return searchable tokens for one MGF record."""
+    meta = record.get("meta", {})
+    if selected_fields is None or "AUTO" in selected_fields:
+        fields = ["FEATURE_ID", "FEATUREID", "FEATURE", "ID", "SCANS", "SCAN", "TITLE"]
+    else:
+        fields = [f.upper() for f in selected_fields]
+
+    tokens = set()
+    for field in fields:
+        val = meta.get(field)
+        if val is None:
+            continue
+        tokens.add(str(val).strip())
+        tokens.add(_normalize_feature_token(val))
+
+        # Extract IDs embedded in TITLE strings, e.g. "Feature ID: 123".
+        if field == "TITLE":
+            import re
+            for m in re.findall(r"(?:feature[_\s-]*id|feature|scan|scans)[:=\s_\-]*(\d+)", str(val), flags=re.I):
+                tokens.add(m)
+
+    return {t for t in tokens if t}
+
+
+def filter_mgf_by_features(
+    mgf_text: str,
+    selected_features: List[str],
+    selected_fields: Optional[List[str]] = None,
+) -> Tuple[str, pd.DataFrame]:
+    """Filter MGF records using selected feature IDs/names and return filtered MGF plus match report."""
+    records = parse_mgf_records(mgf_text)
+    wanted_tokens = set()
+    for feat in selected_features:
+        wanted_tokens.update(_feature_token_variants(feat))
+
+    kept_blocks = []
+    report_rows = []
+    matched_features = set()
+
+    for i, rec in enumerate(records, start=1):
+        tokens = mgf_record_tokens(rec, selected_fields=selected_fields)
+        hits = sorted(wanted_tokens.intersection(tokens))
+        if hits:
+            kept_blocks.append(rec["text"])
+            matched_features.update(hits)
+            meta = rec.get("meta", {})
+            report_rows.append(
+                {
+                    "mgf_record": i,
+                    "matched_token": "; ".join(hits),
+                    "FEATURE_ID": meta.get("FEATURE_ID", meta.get("FEATUREID", "")),
+                    "SCANS": meta.get("SCANS", meta.get("SCAN", "")),
+                    "TITLE": meta.get("TITLE", ""),
+                    "PEPMASS": meta.get("PEPMASS", ""),
+                    "RTINSECONDS": meta.get("RTINSECONDS", ""),
+                }
+            )
+
+    filtered = "\n".join(kept_blocks).strip()
+    if filtered:
+        filtered += "\n"
+
+    report = pd.DataFrame(report_rows)
+    return filtered, report
+
 # -------------------------
 # Didactic text helpers
 # -------------------------
 PARAM_HELP = {
     "imputation": """
-**Missing value imputation** fills in missing values so the analysis can continue.
+    **Imputação de valores ausentes** preenche valores faltantes para que a análise possa continuar.
 
-Common options:
-- **median**: robust to outliers; often a safe default
-- **mean**: simple average; more sensitive to extreme values
-- **most_frequent**: replaces with the most common value
-- **constant (0)**: inserts zero; only appropriate when zero has real meaning
+    Opções comuns:
+    - **median**: robusta a outliers; geralmente uma escolha segura
+    - **mean**: média simples; mais sensível a valores extremos
+    - **most_frequent**: substitui pelo valor mais comum
+    - **constant (0)**: insere zero; apropriado apenas quando zero tem significado real
 
-Didactic note:
-Imputation does not create real information. It is only a practical strategy
-to avoid losing samples/features.
-""",
+    Nota didática:
+    A imputação não cria informação real.
+    Ela é apenas uma estratégia prática para evitar a perda de amostras ou variáveis.
+    """,
+
     "missing_thresh": """
-Features with too many missing values are often unreliable.
+    Variáveis com muitos valores ausentes costumam ser pouco confiáveis.
 
-This parameter removes variables whose missing percentage is above the threshold.
-Example:
-- 90 means a feature is dropped if more than 90% of its values are missing
+    Este parâmetro remove variáveis cujo percentual de valores ausentes
+    ultrapassa o limite definido.
 
-Didactic note:
-Very sparse variables may add noise and instability.
-""",
+    Exemplo:
+    - 90 significa que a variável será removida se mais de 90% dos valores estiverem ausentes.
+
+    Nota didática:
+    Variáveis muito esparsas podem adicionar ruído e instabilidade ao modelo.
+    """,
+
     "sample_norm": """
-**Sample normalization** adjusts each sample relative to itself.
+    **Normalização por amostra** ajusta cada amostra em relação a si mesma.
 
-Why do this?
-Because different samples may differ in:
-- dilution
-- biomass
-- injection amount
-- total signal intensity
+    Por que fazer isso?
 
-Examples:
-- **SumNorm**: scales by the total signal of each sample
-- **MedianNorm**: scales by the sample median
-- **PQN**: adjusts using quotients relative to a reference
-- **CompNorm**: uses one reference variable
-- **QuantileNorm**: forces all samples to have the same distribution
+    Porque diferentes amostras podem variar em:
+    - diluição
+    - biomassa
+    - volume de injeção
+    - intensidade total do sinal
 
-Didactic note:
-Normalization acts mainly at the **sample level**.
-""",
+    Exemplos:
+    - **SumNorm**: escala pela soma total dos sinais da amostra
+    - **MedianNorm**: escala pela mediana da amostra
+    - **PQN**: normaliza usando quocientes em relação a uma referência
+    - **CompNorm**: usa uma variável de referência
+    - **QuantileNorm**: força todas as amostras a terem a mesma distribuição
+
+    Nota didática:
+    A normalização atua principalmente no **nível das amostras**.
+    """,
+
     "transform": """
-**Transformation** changes the numerical shape of the data.
+    **Transformação** altera a forma numérica dos dados.
 
-Why do this?
-Because analytical data are often:
-- right-skewed
-- heteroscedastic
-- dominated by very large peaks
+    Por que fazer isso?
 
-Examples:
-- **LogTransf / Log2Transf**: compress large values
-- **SqrTransf**: square-root transform; milder than log
-- **CrTransf**: cube-root transform
+    Porque dados analíticos frequentemente são:
+    - assimétricos à direita
+    - heterocedásticos
+    - dominados por poucos picos muito intensos
 
-Didactic note:
-Transformation mainly changes the **distribution shape**.
-""",
+    Exemplos:
+    - **LogTransf / Log2Transf**: comprime valores grandes
+    - **SqrTransf**: transformação raiz quadrada; mais suave que log
+    - **CrTransf**: transformação raiz cúbica
+
+    Nota didática:
+    A transformação altera principalmente a **forma da distribuição**.
+    """,
+
     "alignment": """
-**Alignment / batch correction** reduces systematic shifts between batches.
+    **Alinhamento / correção de lote** reduz variações sistemáticas entre diferentes lotes experimentais.
 
-Use this when measurements were acquired in different:
-- days
-- plates
-- runs
-- blocks
-- batches
+    Use quando os dados foram adquiridos em diferentes:
+    - dias
+    - placas
+    - corridas analíticas
+    - blocos
+    - lotes
 
-Example:
-- subtract batch mean
-- subtract batch median
+    Exemplo:
+    - subtrair a média do lote
+    - subtrair a mediana do lote
 
-Didactic note:
-This is not the same as normalization. It tries to reduce structured technical bias.
-""",
+    Nota didática:
+    Isso não é o mesmo que normalização.
+    Aqui o objetivo é reduzir **viés técnico estruturado**.
+    """,
+
     "scaling": """
-**Scaling** adjusts the relative importance of variables.
+    **Escalonamento** ajusta a importância relativa das variáveis.
 
-Why do this?
-Because some features naturally have much larger variance or intensity than others.
+    Por que fazer isso?
 
-Examples:
-- **MeanCenter**: subtract the mean only
-- **AutoScale**: mean-center and divide by standard deviation
-- **ParetoScale**: softer than autoscaling
-- **RangeScale**: scales by max-min range
+    Porque algumas variáveis naturalmente apresentam
+    variância ou intensidade muito maiores que outras.
 
-Didactic note:
-Scaling acts mainly at the **feature level**.
-""",
+    Exemplos:
+    - **MeanCenter**: apenas subtrai a média
+    - **AutoScale**: centraliza na média e divide pelo desvio padrão
+    - **ParetoScale**: versão mais suave do autoscaling
+    - **RangeScale**: escala pela diferença entre máximo e mínimo
+
+    Nota didática:
+    O escalonamento atua principalmente no **nível das variáveis**.
+    """,
+
     "drop_zero_var": """
-A zero-variance feature has the same value in all samples.
+    Uma variável de variância zero possui exatamente o mesmo valor em todas as amostras.
 
-Such features do not help:
-- PCA
-- classification
-- correlation structure
+    Essas variáveis não ajudam em:
+    - PCA
+    - classificação
+    - análise de correlação
 
-So they are usually removed.
-""",
+    Por isso normalmente são removidas.
+    """,
+
     "raw_pca": """
-This PCA is only for quick visual inspection of the raw data.
+    Este PCA serve apenas para inspeção rápida dos dados brutos.
 
-Important:
-- no normalization
-- no transformation
-- no scaling
-- minimal imputation only
+    Importante:
+    - sem normalização
+    - sem transformação
+    - sem escalonamento
+    - apenas imputação mínima
 
-Didactic note:
-This can be misleading when variables have very different scales.
-""",
+    Nota didática:
+    Esse gráfico pode ser enganoso quando as variáveis possuem escalas muito diferentes.
+    """,
+
     "pre_pca_projection": """
-A true PCA score plot is based on:
-- mean-centering
-- covariance structure
-- eigenvectors / loadings
+    Um gráfico de escores de PCA verdadeiro é baseado em:
+    - centralização na média
+    - estrutura de covariância
+    - autovetores / loadings
 
-Here we first show arbitrary projections so students can understand
-that 'reducing to 2D' is not automatically PCA.
-""",
+    Aqui mostramos primeiro projeções arbitrárias para que os estudantes
+    entendam que **reduzir dados para 2D não significa automaticamente fazer PCA**.
+    """,
+
     "pca_components": """
-The number of principal components to calculate.
+    Número de componentes principais a serem calculados.
 
-Each component captures a direction of variation in the data:
-- PC1 explains the largest variance
-- PC2 explains the next largest variance
-- and so on
-""",
+    Cada componente captura uma direção de variação nos dados:
+    - PC1 explica a maior variância
+    - PC2 explica a segunda maior
+    - e assim por diante
+    """,
+
     "plsda_components": """
-The number of latent variables in PLS-DA.
+    Número de variáveis latentes no modelo PLS-DA.
 
-Too few components:
-- may underfit the class structure
+    Poucos componentes:
+    - podem subajustar a estrutura das classes
 
-Too many components:
-- may overfit noise
+    Muitos componentes:
+    - podem ajustar ruído (overfitting)
 
-Didactic note:
-Always interpret PLS-DA together with validation.
-""",
+    Nota didática:
+    Sempre interprete PLS-DA junto com a validação.
+    """,
+
     "cv_folds": """
-Cross-validation splits the data into parts.
+    A validação cruzada divide os dados em partes.
 
-Example:
-- 5 folds means the model is trained on 4 parts and tested on 1 part,
-  repeated until all parts are tested.
+    Exemplo:
+    - 5 folds significa que o modelo é treinado em 4 partes
+      e testado na parte restante,
+      repetindo o processo até todas as partes serem testadas.
 
-More folds:
-- often use more training data
-- but may become unstable with very small datasets
-""",
+    Mais folds:
+    - usam mais dados para treino
+    - mas podem ficar instáveis em conjuntos muito pequenos
+    """,
+
     "cv_repeats": """
-Repeating cross-validation with different random splits gives a more stable estimate.
+    Repetir a validação cruzada com diferentes divisões aleatórias
+    gera uma estimativa mais estável do desempenho do modelo.
 
-Didactic note:
-One single split may be lucky or unlucky.
-Repeats reduce dependence on one random partition.
-""",
+    Nota didática:
+    Uma única divisão pode ser muito favorável ou desfavorável por acaso.
+    Repetições reduzem essa dependência.
+    """,
+
     "logreg_C": """
-**C** controls regularization strength in logistic regression.
+    **C** controla a intensidade da regularização na regressão logística.
 
-- small C -> stronger regularization
-- large C -> weaker regularization
+    - C pequeno → regularização mais forte
+    - C grande → regularização mais fraca
 
-Didactic note:
-Stronger regularization helps prevent overfitting.
-""",
+    Nota didática:
+    Regularização mais forte ajuda a evitar overfitting.
+    """,
+
     "max_iter": """
-Maximum number of optimization iterations.
+    Número máximo de iterações do algoritmo de otimização.
 
-If the model does not converge, increasing this value may help.
-""",
+    Se o modelo não convergir, aumentar esse valor pode ajudar.
+    """,
+
     "vip": """
-VIP = Variable Importance in Projection.
+    VIP = Importância da Variável na Projeção.
 
-In PLS-DA, VIP is often used to rank variables by overall contribution
-to the latent structure related to the response.
-""",
+    Em PLS-DA, o VIP é frequentemente usado para ordenar variáveis
+    de acordo com sua contribuição para a estrutura latente
+    relacionada à resposta.
+    """,
 
-"validation_overview": """
-**Validation** asks a crucial question:
+    "validation_overview": """
+    **Validação** responde a uma pergunta crucial:
 
-> Does the model work well only on the data used to build it, or does it also work on new data?
+    > O modelo funciona bem apenas nos dados usados para construí-lo,
+    > ou também funciona bem em dados novos?
 
-This tab helps students understand whether the classification model is:
-- reliable
-- stable
-- generalizable
-- balanced across classes
+    Esta aba ajuda os estudantes a entender se o modelo de classificação é:
 
-Main ideas shown here:
-- **cross-validation**
-- **accuracy**
-- **balanced accuracy**
-- **confusion matrix**
-- **ROC curve** (for binary classification)
-- **classification report**
+    - confiável
+    - estável
+    - generalizável
+    - equilibrado entre classes
 
-Didactic note:
-A model is not good just because it fits the training data.
-A good model must also perform well on data it has not seen before.
-""",
+    Ideias principais apresentadas aqui:
+    - **validação cruzada**
+    - **acurácia**
+    - **acurácia balanceada**
+    - **matriz de confusão**
+    - **curva ROC** (para classificação binária)
+    - **relatório de classificação**
 
-"validation_cv_overview": """
-**Cross-validation** is a strategy to estimate model performance on unseen data.
+    Nota didática:
+    Um modelo não é bom apenas porque se ajusta bem aos dados de treino.
+    Ele também precisa funcionar bem em dados que ainda não viu.
+    """,
 
-Instead of training and testing on the same samples, the dataset is split into parts:
-- some samples are used for training
-- the remaining samples are used for testing
+    "validation_cv_overview": """
+    **Validação cruzada** é uma estratégia para estimar o desempenho do modelo em dados não vistos.
 
-This process is repeated several times.
+    Em vez de treinar e testar no mesmo conjunto de amostras,
+    o conjunto de dados é dividido em partes:
+    - algumas amostras são usadas para treino
+    - as restantes são usadas para teste
 
-### Why do this?
-Because testing on the same data used for training gives an overly optimistic result.
+    Esse processo é repetido várias vezes.
 
-### In this app
-- **Folds** = how many parts the data is divided into
-- **Repeats** = how many times the split procedure is repeated with different random shuffles
+    ### Por que fazer isso?
+    Porque testar no mesmo conjunto usado no treino gera uma estimativa otimista demais.
 
-Didactic note:
-Cross-validation is especially important when the dataset is small.
-""",
+    ### Neste app
+    - **Folds** = em quantas partes o conjunto é dividido
+    - **Repeats** = quantas vezes o processo é repetido com embaralhamentos diferentes
 
-"validation_accuracy": """
-**Accuracy** is the fraction of correctly classified samples.
+    Nota didática:
+    A validação cruzada é especialmente importante quando o conjunto de dados é pequeno.
+    """,
 
-Formula:
+    "validation_accuracy": """
+    **Acurácia** é a fração de amostras classificadas corretamente.
 
-Accuracy = correct predictions / total predictions
+    Fórmula:
 
-### Example
-If 18 out of 20 samples are correctly classified:
+    Acurácia = predições corretas / total de predições
 
-Accuracy = 18 / 20 = 0.90
+    ### Exemplo
+    Se 18 de 20 amostras foram classificadas corretamente:
 
-### Limitation
-Accuracy can be misleading when classes are imbalanced.
+    Acurácia = 18 / 20 = 0,90
 
-Example:
-- 90 samples from class A
-- 10 samples from class B
+    ### Limitação
+    A acurácia pode ser enganosa quando as classes são desbalanceadas.
 
-A model that always predicts class A already gets 90% accuracy,
-even though it completely fails for class B.
-""",
+    Exemplo:
+    - 90 amostras da classe A
+    - 10 amostras da classe B
 
-"validation_balanced_accuracy": """
-**Balanced accuracy** gives equal importance to each class.
+    Um modelo que sempre prevê classe A já obtém 90% de acurácia,
+    mesmo falhando completamente para a classe B.
+    """,
 
-It is especially useful when the classes are not equally represented.
+    "validation_balanced_accuracy": """
+    **Acurácia balanceada** dá o mesmo peso para cada classe.
 
-### Idea
-Instead of focusing only on the total number of correct predictions,
-balanced accuracy averages the recall obtained in each class.
+    Ela é especialmente útil quando as classes não têm o mesmo número de amostras.
 
-### Why is this useful?
-Because it prevents the largest class from dominating the metric.
+    ### Ideia
+    Em vez de considerar apenas o total de acertos,
+    a acurácia balanceada calcula a média do recall obtido em cada classe.
 
-### Interpretation
-- high balanced accuracy = model performs reasonably well across classes
-- low balanced accuracy = one or more classes are being poorly predicted
-""",
+    ### Por que isso é útil?
+    Porque impede que a classe maior domine a métrica.
 
-"validation_confusion_matrix": """
-A **confusion matrix** shows how predicted classes compare to true classes.
+    ### Interpretação
+    - acurácia balanceada alta = o modelo funciona razoavelmente bem em todas as classes
+    - acurácia balanceada baixa = uma ou mais classes estão sendo mal previstas
+    """,
 
-Rows = true classes  
-Columns = predicted classes
+    "validation_confusion_matrix": """
+    **Matriz de confusão**
 
-### Diagonal cells
-These are correct predictions.
+    A matriz de confusão mostra como as classes previstas se comparam às classes reais.
 
-### Off-diagonal cells
-These are classification errors.
+    Linhas = classes reais
+    Colunas = classes previstas
 
-### Why is this useful?
-Because it shows *where* the model is making mistakes.
+    ### Diagonal principal
+    Representa as classificações corretas.
 
-For example:
-- class A may be confused with class B
-- class C may be predicted very well
-- one class may be systematically misclassified
+    ### Fora da diagonal
+    Representa erros de classificação.
 
-Didactic note:
-A confusion matrix is often more informative than a single performance number.
-""",
+    ### Por que isso é útil?
+    Porque mostra **onde** o modelo está errando.
 
-"validation_roc": """
-The **ROC curve** is used for **binary classification**.
+    Por exemplo:
+    - a classe A pode estar sendo confundida com a classe B
+    - a classe C pode estar sendo prevista muito bem
+    - uma classe pode estar sendo sistematicamente mal classificada
+    """,
 
-ROC = Receiver Operating Characteristic
+    "validation_roc": """
+    **Curva ROC** é usada para **classificação binária**.
 
-It shows the trade-off between:
-- **True Positive Rate (Sensitivity)**
-- **False Positive Rate**
+    ROC = Receiver Operating Characteristic
 
-for different classification thresholds.
+    Ela mostra a relação entre:
+    - **taxa de verdadeiros positivos (sensibilidade)**
+    - **taxa de falsos positivos**
 
-### Interpretation
-A model with a better ROC curve separates the two classes more effectively.
+    para diferentes limiares de classificação.
 
-### AUC
-The **Area Under the Curve (AUC)** summarizes ROC performance:
+    ### Interpretação
+    Um modelo com melhor curva ROC separa melhor as duas classes.
 
-- **AUC = 0.5** → no discrimination (random-like)
-- **AUC = 1.0** → perfect separation
+    ### AUC
+    A **Área Sob a Curva (AUC)** resume o desempenho:
 
-### Important
-ROC is shown here only for **binary targets**.
-For multiclass data, this simple ROC view is not directly applicable.
-""",
+    - **AUC = 0,5** → sem discriminação (parecido com acaso)
+    - **AUC = 1,0** → separação perfeita
 
-"validation_positive_class": """
-In binary classification, one class is treated as the **positive class**.
+    ### Importante
+    A ROC mostrada aqui vale apenas para **alvos binários**.
+    """,
 
-This matters for:
-- ROC curve
-- sensitivity
-- specificity
-- probability interpretation
+    "validation_positive_class": """
+    Em classificação binária, uma das classes é tratada como **classe positiva**.
 
-### Example
-If the classes are:
-- Control
-- Treated
+    Isso importa para:
+    - curva ROC
+    - sensibilidade
+    - especificidade
+    - interpretação das probabilidades
 
-you may choose **Treated** as the positive class if that is the condition of interest.
+    ### Exemplo
+    Se as classes forem:
+    - Controle
+    - Tratado
 
-Didactic note:
-Changing the positive class changes how the ROC calculation is interpreted.
-""",
+    você pode escolher **Tratado** como classe positiva
+    se essa for a condição de interesse.
+    """,
 
-"validation_classification_report": """
-The **classification report** summarizes performance for each class.
+    "validation_classification_report": """
+    **Relatório de classificação**
 
-Common terms:
-- **Precision**: among predicted positives, how many were truly positive?
-- **Recall**: among true positives, how many were recovered?
-- **F1-score**: balance between precision and recall
-- **Support**: number of true samples in that class
+    O relatório de classificação resume o desempenho do modelo para cada classe.
 
-### Why is this useful?
-Because two models with the same accuracy may behave very differently for specific classes.
+    Ele normalmente inclui:
 
-Didactic note:
-This table is very useful when one class is harder to predict than another.
-""",
+    - **precisão (precision)**: entre as amostras previstas como pertencentes a uma classe, quantas estavam corretas
+    - **recall / sensibilidade**: entre as amostras que realmente pertencem à classe, quantas foram identificadas corretamente
+    - **F1-score**: média harmônica entre precisão e recall
+    - **support**: número de amostras reais em cada classe
 
-"validation_repeats": """
-Repeating cross-validation gives a more stable estimate of performance.
+    Esse relatório ajuda a avaliar se o modelo está equilibrado entre as diferentes classes,
+    e não apenas apresentando uma boa acurácia global.
+    """,
 
-Why?
-Because one random split may be unusually favorable or unfavorable.
+    "validation_repeats": """
+    **Repetições da validação**
 
-### With repeats
-The model is evaluated over several different fold assignments.
+    Número de vezes que o procedimento de validação cruzada será repetido.
 
-This reduces dependence on a single random partition of the data.
+    Mais repetições:
+    - tendem a gerar estimativas mais estáveis
+    - reduzem a dependência de uma única divisão aleatória
 
-Didactic note:
-More repeats usually improve stability, but they also increase computation time.
-""",
-"univariate_overview": """
-**Univariate analysis** looks at one variable at a time.
+    Porém:
+    - aumentam o tempo de processamento
+    """,
 
-This is useful when you want to:
-- inspect individual features
-- compare distributions between groups
-- test whether one feature differs significantly across groups
+    "univariate_overview": """
+    **Análise univariada** examina uma variável por vez.
 
-This tab complements multivariate analysis:
-- multivariate methods look at patterns across many variables together
-- univariate methods inspect each variable individually
+    Isso é útil quando queremos:
+    - inspecionar variáveis individuais
+    - comparar distribuições entre grupos
+    - testar se uma variável difere significativamente entre grupos
 
-Typical tools:
-- boxplots
-- strip plots / individual points
-- group means and standard deviations
-- t-test (2 groups)
-- ANOVA (3 or more groups)
-""",
+    Esta aba complementa a análise multivariada:
+    - métodos multivariados analisam padrões envolvendo muitas variáveis ao mesmo tempo
+    - métodos univariados analisam cada variável individualmente
 
-"anova_help": """
-**ANOVA** = Analysis of Variance
+    Ferramentas típicas:
+    - boxplots
+    - gráficos de pontos
+    - médias e desvios padrão por grupo
+    - teste t (2 grupos)
+    - ANOVA (3 ou mais grupos)
+    """,
 
-ANOVA tests whether the mean of a feature differs across multiple groups.
+    "anova_help": """
+    **ANOVA** = Análise de Variância
 
-### Null hypothesis
-All group means are equal.
+    A ANOVA testa se a média de uma variável difere entre múltiplos grupos.
 
-### Alternative hypothesis
-At least one group mean is different.
+    ### Hipótese nula
+    Todas as médias dos grupos são iguais.
 
-### Important
-ANOVA tells you whether there is a difference somewhere,
-but not exactly which groups differ from each other.
+    ### Hipótese alternativa
+    Pelo menos uma média de grupo é diferente.
 
-For that, post-hoc tests would be needed later.
-""",
+    ### Importante
+    A ANOVA indica se existe diferença em algum lugar,
+    mas não mostra exatamente quais grupos diferem entre si.
 
-"ttest_help": """
-A **t-test** compares the means of two groups.
+    Para isso, seriam necessários testes pós-hoc.
+    """,
 
-### Null hypothesis
-The two group means are equal.
+    "ttest_help": """
+    **Teste t** compara as médias de dois grupos.
 
-### Alternative hypothesis
-The two group means are different.
+    ### Hipótese nula
+    As médias dos dois grupos são iguais.
 
-In this tab, the t-test is shown only when exactly 2 groups are present.
-""",
+    ### Hipótese alternativa
+    As médias dos dois grupos são diferentes.
 
-"vip_univariate_help": """
-**VIP ranking** comes from PLS-DA.
+    Nesta aba, o teste t é mostrado apenas quando existem exatamente 2 grupos.
+    """,
 
-VIP = Variable Importance in Projection
+    "vip_univariate_help": """
+    **Seleção de variáveis por VIP e análise univariada**
 
-Using VIP here is useful because:
-- it prioritizes features that contributed more to multivariate class separation
-- it helps connect multivariate and univariate interpretation
+    O **VIP (Variable Importance in Projection)** indica o quanto cada variável contribui
+    para o modelo PLS-DA.
 
-But remember:
-- high VIP does not automatically mean statistically significant in univariate analysis
-- a feature may be important multivariately but not strongly different alone
-""",
+    Valores típicos de interpretação:
+    - **VIP > 1,0** → variável importante para a discriminação entre grupos
+    - **VIP ≈ 1,0** → contribuição moderada
+    - **VIP < 1,0** → contribuição menor
+
+    Nesta seção você pode:
+    - selecionar variáveis com base no VIP
+    - visualizar boxplots por grupo
+    - aplicar testes univariados
+
+    Isso ajuda a interpretar quais variáveis individuais
+    explicam a separação observada no modelo multivariado.
+    """,
 }
 
 # =====================================================
@@ -1520,7 +1694,8 @@ tabs = st.tabs(
         "4) Modeling",
         "5) Validation",
         "6) Univariate Analysis",
-        "7) Interpretation",
+        "7) MGF VIP Export",
+        "8) Interpretation",
     ]
 )
 
@@ -2986,12 +3161,12 @@ with tabs[4]:
     elif APP.y_raw is None:
         st.warning("No target y selected. Choose a categorical target column in the sidebar to model.")
     else:
-        y_ser = pd.Series(APP.y_raw).reset_index(drop=True)
+        y_ser = APP.y_raw
 
         # basic cleanup: drop missing y
-        mask = (~pd.isna(y_ser)).to_numpy(dtype=bool)
-        X = np.asarray(APP.X_proc, dtype=float)[mask, :]
-        y = y_ser.loc[mask].astype(str).to_numpy(dtype=str)
+        mask = ~pd.isna(y_ser)
+        X = APP.X_proc[mask.values, :]
+        y = y_ser[mask].astype(str).values
 
         # --- determine max folds allowed (useful later / consistency) ---
         class_counts = pd.Series(y).value_counts()
@@ -3128,7 +3303,7 @@ with tabs[4]:
             # Add SampleID if available (nice for hover)
             if APP.raw is not None and APP.id_col and APP.id_col in APP.raw.columns:
                 # Align indices: use same mask used above
-                sample_ids = (APP.raw.reset_index(drop=True).loc[mask, APP.id_col].astype(str).to_numpy())
+                sample_ids = APP.raw.loc[mask.values, APP.id_col].astype(str).values
                 scores_df[APP.id_col] = sample_ids
 
             hover_cols = [c for c in scores_df.columns if c not in [f"LV{i+1}" for i in range(n_comp)]]
@@ -3409,12 +3584,10 @@ with tabs[5]:
         # -------------------------
         # Data
         # -------------------------
-        y_ser = pd.Series(APP.y_raw).reset_index(drop=True)
-
-        # Force NumPy arrays; avoids Pandas/Arrow indexing errors in scikit-learn CV
-        mask = (~pd.isna(y_ser)).to_numpy(dtype=bool)
-        X = np.asarray(APP.X_proc, dtype=float)[mask, :]
-        y = y_ser.loc[mask].astype(str).to_numpy(dtype=str)
+        y_ser = APP.y_raw
+        mask = ~pd.isna(y_ser)
+        X = APP.X_proc[mask.values, :]
+        y = y_ser[mask].astype(str).values
 
         # Stable class order
         classes = np.array(sorted(pd.unique(y).tolist()))
@@ -3641,7 +3814,7 @@ with tabs[6]:
         uni_df["Group"] = y.values
 
         if APP.id_col and APP.raw is not None and APP.id_col in APP.raw.columns:
-            uni_df["SampleID"] = (APP.raw.reset_index(drop=True).loc[mask, APP.id_col].astype(str).to_numpy())
+            uni_df["SampleID"] = APP.raw.loc[mask.values, APP.id_col].astype(str).values
         else:
             uni_df["SampleID"] = [f"Sample_{i+1}" for i in range(len(uni_df))]
 
@@ -3829,10 +4002,123 @@ with tabs[6]:
             )
 
 # -------------------------
-# 7) Interpretation
+# 7) MGF VIP Export
 # -------------------------
 with tabs[7]:
-    st.header("7) Interpretation")
+    st.header("7) MGF VIP Export")
+
+    st.write(
+        "Upload an MGF file and export a new MGF containing only spectra whose feature IDs match "
+        "the selected VIP-ranked features. Run **PLS-DA** in the Modeling tab first to generate VIP scores."
+    )
+
+    if APP.vip_df is None or APP.vip_df.empty:
+        st.info("Run PLS-DA in the Modeling tab first. The VIP table will be stored as APP.vip_df.")
+    else:
+        vip_df_export = APP.vip_df.copy().sort_values("VIP", ascending=False)
+
+        c1, c2 = st.columns(2)
+        with c1:
+            top_n_vips = st.slider(
+                "Number of VIP features to export",
+                min_value=1,
+                max_value=min(300, len(vip_df_export)),
+                value=min(30, len(vip_df_export)),
+                step=1,
+                key="mgf_top_n_vips",
+            )
+        with c2:
+            match_fields = st.multiselect(
+                "MGF metadata fields used for matching",
+                options=["AUTO", "FEATURE_ID", "SCANS", "TITLE", "ID", "FEATURE"],
+                default=["AUTO"],
+                help=(
+                    "AUTO tries FEATURE_ID, FEATUREID, FEATURE, ID, SCANS, SCAN and TITLE. "
+                    "For MZmine/GNPS exports, FEATURE_ID or SCANS are usually the most useful fields."
+                ),
+                key="mgf_match_fields",
+            )
+
+        candidate_features = vip_df_export["feature"].astype(str).head(top_n_vips).tolist()
+
+        selected_vip_features = st.multiselect(
+            "VIP features included in the filtered MGF",
+            options=vip_df_export["feature"].astype(str).tolist(),
+            default=candidate_features,
+            help="Default = top N VIP features. You can manually add/remove features before export.",
+            key="mgf_selected_vip_features",
+        )
+
+        with st.expander("Preview selected VIP table", expanded=False):
+            st.dataframe(
+                vip_df_export[vip_df_export["feature"].astype(str).isin(selected_vip_features)],
+                use_container_width=True,
+            )
+
+        mgf_upload = st.file_uploader(
+            "Upload MGF file",
+            type=["mgf"],
+            accept_multiple_files=False,
+            key="mgf_upload_for_vip_filter",
+        )
+
+        if mgf_upload is not None:
+            mgf_text = mgf_upload.getvalue().decode("utf-8", errors="replace")
+            records = parse_mgf_records(mgf_text)
+            st.caption(f"Detected {len(records)} MS/MS spectrum record(s) in the uploaded MGF.")
+
+            if not selected_vip_features:
+                st.warning("Select at least one VIP feature before filtering.")
+            elif not records:
+                st.error("No BEGIN IONS / END IONS records were detected in this MGF file.")
+            else:
+                filtered_mgf, match_report = filter_mgf_by_features(
+                    mgf_text,
+                    selected_features=selected_vip_features,
+                    selected_fields=match_fields,
+                )
+
+                n_kept = 0 if match_report.empty else match_report.shape[0]
+                st.success(f"Filtered MGF contains {n_kept} spectrum record(s).")
+
+                if match_report.empty:
+                    st.warning(
+                        "No spectra matched the selected VIP feature names/IDs. "
+                        "Check whether your VIP feature names correspond to FEATURE_ID, SCANS or TITLE in the MGF."
+                    )
+                    with st.expander("Show first MGF metadata records for troubleshooting", expanded=True):
+                        preview_rows = []
+                        for i, rec in enumerate(records[:20], start=1):
+                            row = {"mgf_record": i}
+                            row.update(rec.get("meta", {}))
+                            preview_rows.append(row)
+                        st.dataframe(pd.DataFrame(preview_rows), use_container_width=True)
+                else:
+                    st.subheader("Matched MGF records")
+                    st.dataframe(match_report, use_container_width=True)
+
+                    base = Path(mgf_upload.name).stem
+                    st.download_button(
+                        "Download filtered VIP MGF",
+                        data=filtered_mgf.encode("utf-8"),
+                        file_name=f"{_safe_filename(base)}_top{len(selected_vip_features)}_VIP_filtered.mgf",
+                        mime="chemical/x-mgf",
+                        use_container_width=True,
+                    )
+
+                    st.download_button(
+                        "Download match report (.csv)",
+                        data=match_report.to_csv(index=False).encode("utf-8"),
+                        file_name=f"{_safe_filename(base)}_VIP_MGF_match_report.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                    )
+
+# -------------------------
+# 8) Interpretation
+# -------------------------
+with tabs[8]:
+    st.header("8) Interpretation")
 
     if APP.X_proc is None:
         st.info("Run preprocessing first.")
