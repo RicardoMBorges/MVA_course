@@ -4111,7 +4111,7 @@ with tabs[5]:
                 n_permutations = st.slider(
                     "Number of permutations",
                     min_value=10,
-                    max_value=500,
+                    max_value=10000,
                     value=100,
                     step=10,
                     key="validation_plsda_n_permutations",
